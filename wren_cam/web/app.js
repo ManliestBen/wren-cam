@@ -68,7 +68,25 @@ function renderLive() {
         <span>${cam.name} — ${cam.width}×${cam.height} @ ${cam.framerate}fps</span>
         <span class="status" data-cam="${cam.id}"></span>
       </div>
+      <div class="actions">
+        <button class="secondary" data-snap="${cam.id}">Snapshot</button>
+      </div>
     `;
+    card.querySelector(`[data-snap="${cam.id}"]`).onclick = async (ev) => {
+      const btn = ev.currentTarget;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = "Saving…";
+      try {
+        const res = await api(`/api/cameras/${cam.id}/snapshot`, { method: "POST" });
+        toast(`Saved ${res.name}`);
+      } catch (e) {
+        toast("Snapshot failed: " + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    };
     grid.appendChild(card);
   });
 }
@@ -232,14 +250,18 @@ async function loadRecordings() {
     files.forEach((f) => {
       const li = document.createElement("li");
       li.className = "recording";
+      const url = `/api/recordings/${encodeURIComponent(f.name)}`;
+      const media = f.kind === "photo"
+        ? `<img class="snapshot" src="${url}" alt="${f.name}" />`
+        : `<video controls preload="none" src="${url}"></video>`;
       li.innerHTML = `
         <header>
           <strong>${f.name}</strong>
           <span>${formatBytes(f.size)} · ${formatTime(f.modified)}</span>
         </header>
-        <video controls preload="none" src="/api/recordings/${encodeURIComponent(f.name)}"></video>
+        ${media}
         <div class="row" style="margin-top:0.5rem">
-          <a href="/api/recordings/${encodeURIComponent(f.name)}" download><button class="secondary">Download</button></a>
+          <a href="${url}" download><button class="secondary">Download</button></a>
           <button class="danger" data-name="${f.name}">Delete</button>
         </div>
       `;

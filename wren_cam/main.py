@@ -177,6 +177,18 @@ def restart_camera(cam_id: int):
     return {"ok": True}
 
 
+@app.post("/api/cameras/{cam_id}/snapshot")
+def save_snapshot(cam_id: int):
+    worker = state.workers.get(cam_id)
+    if worker is None:
+        raise HTTPException(404, "camera not available")
+    path = worker.save_snapshot()
+    if path is None:
+        raise HTTPException(503, "snapshot failed")
+    st = path.stat()
+    return {"name": path.name, "size": st.st_size, "modified": int(st.st_mtime)}
+
+
 @app.get("/snapshot/{cam_id}.jpg")
 def snapshot(cam_id: int):
     worker = state.workers.get(cam_id)
@@ -220,21 +232,33 @@ def stream(cam_id: int):
     )
 
 
+_MEDIA_EXTS = {".mp4": "video/mp4", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+
+
 @app.get("/api/recordings")
 def list_recordings():
     cfg = state.config
     rec_dir = Path(cfg.recordings_dir)
     if not rec_dir.exists():
         return []
-    files = []
-    for p in sorted(rec_dir.glob("*.mp4"), key=lambda x: x.stat().st_mtime, reverse=True):
-        st = p.stat()
-        files.append({
+    entries = []
+    for p in rec_dir.iterdir():
+        if not p.is_file():
+            continue
+        ext = p.suffix.lower()
+        if ext not in _MEDIA_EXTS:
+            continue
+        entries.append(p)
+    entries.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    return [
+        {
             "name": p.name,
-            "size": st.st_size,
-            "modified": int(st.st_mtime),
-        })
-    return files
+            "size": p.stat().st_size,
+            "modified": int(p.stat().st_mtime),
+            "kind": "video" if p.suffix.lower() == ".mp4" else "photo",
+        }
+        for p in entries
+    ]
 
 
 def _safe_recording_path(name: str) -> Path:
@@ -245,13 +269,16 @@ def _safe_recording_path(name: str) -> Path:
         raise HTTPException(400, "invalid path")
     if not candidate.is_file():
         raise HTTPException(404, "not found")
+    if candidate.suffix.lower() not in _MEDIA_EXTS:
+        raise HTTPException(400, "unsupported file type")
     return candidate
 
 
 @app.get("/api/recordings/{name}")
 def get_recording(name: str):
     path = _safe_recording_path(name)
-    return FileResponse(path, media_type="video/mp4", filename=name)
+    media_type = _MEDIA_EXTS[path.suffix.lower()]
+    return FileResponse(path, media_type=media_type, filename=name)
 
 
 @app.delete("/api/recordings/{name}")

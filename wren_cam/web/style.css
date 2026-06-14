@@ -6,6 +6,13 @@
   --accent: #4ea1ff;
   --border: #333;
   --danger: #ff5b5b;
+
+  /* brand palette pulled from the wren-cam logo */
+  --brand-bg: #f5ede0;
+  --brand-text: #5a3a26;
+  --brand-muted: #9a8270;
+  --brand-accent: #7ab86a;
+  --brand-border: #d9ccb6;
 }
 
 * { box-sizing: border-box; }
@@ -21,16 +28,35 @@ header {
   display: flex;
   align-items: center;
   gap: 1.5rem;
-  padding: 0.75rem 1rem;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 1rem;
+  background: var(--brand-bg);
+  color: var(--brand-text);
+  border-bottom: 1px solid var(--brand-border);
 }
 
-header h1 { margin: 0; font-size: 1.2rem; }
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+}
+
+.brand-icon {
+  height: 40px;
+  width: 40px;
+  border-radius: 50%;
+  display: block;
+}
+
+.brand-wordmark {
+  height: 32px;
+  width: auto;
+  display: block;
+}
 
 nav button {
   background: transparent;
-  color: var(--muted);
+  color: var(--brand-muted);
   border: none;
   font: inherit;
   padding: 0.4rem 0.75rem;
@@ -39,8 +65,8 @@ nav button {
 }
 
 nav button.active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
+  color: var(--brand-text);
+  border-bottom-color: var(--brand-accent);
 }
 
 main { padding: 1rem; }
@@ -157,7 +183,20 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   align-items: center;
 }
 
-.recording video { width: 100%; max-height: 60vh; background: #000; border-radius: 4px; }
+.recording video,
+.recording img.snapshot {
+  width: 100%;
+  max-height: 60vh;
+  background: #000;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+.cam-card .actions {
+  padding: 0 0.75rem 0.75rem 0.75rem;
+  display: flex;
+  gap: 0.5rem;
+}
 
 #toast {
   position: fixed;

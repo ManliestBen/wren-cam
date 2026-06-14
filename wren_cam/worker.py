@@ -105,16 +105,32 @@ class CameraWorker(threading.Thread):
             measured_fps=round(self._measured_fps, 2),
         )
 
-    def _encode_jpeg(self, arr) -> Optional[bytes]:
+    def _encode_jpeg(self, arr, quality: Optional[int] = None) -> Optional[bytes]:
         from PIL import Image
         try:
             img = Image.fromarray(arr)
             buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=self.stream_quality)
+            img.save(buf, format="JPEG", quality=quality or self.stream_quality)
             return buf.getvalue()
         except Exception as e:
             logger.debug("cam%d jpeg encode failed: %s", self.cfg.id, e)
             return None
+
+    def save_snapshot(self, quality: int = 95) -> Optional[Path]:
+        """Capture a fresh high-quality JPEG and save it to the recordings dir."""
+        arr = self.camera.capture_array()
+        if arr is None:
+            return None
+        jpeg = self._encode_jpeg(arr, quality=quality)
+        if jpeg is None:
+            return None
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = self.recordings_dir / f"cam{self.cfg.id}-snap-{ts}.jpg"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(jpeg)
+        logger.info("snapshot saved: %s", path)
+        return path
 
     def run(self) -> None:
         target_dt = 1.0 / max(self.camera.framerate, 1)
