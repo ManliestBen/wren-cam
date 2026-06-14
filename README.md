@@ -107,6 +107,38 @@ Tuning:
 
 Clips are written to `recordings_dir` as `cam<id>-YYYYMMDD-HHMMSS.mp4` (H.264, ultrafast preset, faststart). The UI lists, plays, downloads, and deletes them. No database — the UI just lists `*.mp4` from disk.
 
+## Logs & crash recovery
+
+The service writes logs in two places:
+
+| Where                                 | How to read                                  |
+|---------------------------------------|----------------------------------------------|
+| systemd journal                       | `journalctl -u wren-cam -n 500 --no-pager`   |
+| Rotating file (default: `./wren-cam.log`) | `tail -f ~/wren-cam/wren-cam.log`        |
+| Last 200 lines via HTTP               | `curl http://<pi>:8080/api/logs?lines=200`   |
+
+The journal also keeps logs from the **previous boot** — useful when the Pi locked up:
+
+```bash
+journalctl -u wren-cam -b -1 --no-pager     # logs from the boot before this one
+```
+
+The Python process catches and logs uncaught exceptions (both main thread and worker threads) before exiting, so a crash leaves a traceback in both the file and the journal.
+
+### Resource limits
+
+The systemd unit caps memory and CPU so a misbehaving wren-cam process can't take the whole Pi offline:
+
+- `MemoryMax=1500M` — kernel kills wren-cam if it exceeds this. Tune up if you have an 8 GB Pi and want more headroom.
+- `CPUQuota=300%` — leaves one full core for the OS / SSH on a 4-core Pi 5.
+- `OOMScoreAdjust=500` — under memory pressure, wren-cam is killed first, not your shell.
+- `Nice=10` — interactive processes preempt wren-cam, so SSH stays snappy.
+- `Restart=always` with `StartLimitBurst=5 / IntervalSec=600` — service comes back automatically but stops thrashing if it crashes >5 times in 10 minutes. Re-enable with `sudo systemctl reset-failed wren-cam`.
+
+### Disk-full protection
+
+When free space on the recordings volume drops below 500 MB, the recorder logs a warning and skips that clip rather than filling the disk. Existing clips are never auto-deleted — clean up via the Recordings tab in the UI.
+
 ## Notes
 
 - **One process, two cameras:** Starting cam 1 is staggered 5 seconds after cam 0 to avoid libcamera contention. If cam 1 still fails to start, lower its resolution or framerate first.

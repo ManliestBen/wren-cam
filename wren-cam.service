@@ -2,15 +2,43 @@
 Description=wren-cam — Raspberry Pi 5 bird cam
 After=network-online.target
 Wants=network-online.target
+# If wren-cam keeps crashing in a tight loop, give up after 5 fails in 10 min
+# rather than thrashing the system. Re-enable manually with `systemctl reset-failed`.
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/wren-cam
 Environment=WREN_CAM_CONFIG=/home/pi/wren-cam/config.json
+Environment=WREN_CAM_LOG=/home/pi/wren-cam/wren-cam.log
 ExecStart=/home/pi/wren-cam/.venv/bin/python -m wren_cam
-Restart=on-failure
-RestartSec=5
+
+# Always come back up after any exit, but wait 10s so we don't restart-spam
+Restart=always
+RestartSec=10
+TimeoutStopSec=20
+
+# Resource caps so a runaway wren-cam can't take down the whole Pi.
+# Pi 5 has 4 cores → CPUQuota=300% leaves a full core for the OS/SSH.
+# Memory caps assume 4 GB Pi; raise them if you have 8 GB and want more headroom.
+MemoryHigh=1G
+MemoryMax=1500M
+CPUQuota=300%
+
+# Make wren-cam the kernel's first pick under memory pressure (range -1000..1000;
+# >0 means "kill me before other processes"). Keeps SSH/init alive.
+OOMScoreAdjust=500
+
+# Run at lower priority so interactive shells / system services preempt us.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=5
+
+# stdout/stderr go to journal; the app also writes a rotating file at WREN_CAM_LOG.
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

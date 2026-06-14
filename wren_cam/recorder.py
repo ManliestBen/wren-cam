@@ -30,6 +30,8 @@ class Recorder:
         self._fps = 0
         self._started_at: Optional[datetime] = None
 
+    MIN_FREE_BYTES = 500 * 1024 * 1024  # 500 MB; refuse to start a clip below this
+
     @staticmethod
     def ffmpeg_available() -> bool:
         return shutil.which("ffmpeg") is not None
@@ -37,11 +39,25 @@ class Recorder:
     def is_recording(self) -> bool:
         return self._proc is not None
 
+    def _free_bytes(self) -> int:
+        try:
+            return shutil.disk_usage(str(self.recordings_dir)).free
+        except Exception as e:
+            logger.warning("disk_usage check failed: %s", e)
+            return -1  # treat unknown as OK; don't block recording
+
     def start(self, width: int, height: int, fps: int) -> Optional[Path]:
         if self._proc is not None:
             return self._path
         if not self.ffmpeg_available():
             logger.error("ffmpeg not found in PATH; cannot record")
+            return None
+        free = self._free_bytes()
+        if 0 <= free < self.MIN_FREE_BYTES:
+            logger.warning(
+                "cam%d: skipping recording, only %.1f MB free in %s",
+                self.camera_id, free / 1024 / 1024, self.recordings_dir,
+            )
             return None
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         out = self.recordings_dir / f"cam{self.camera_id}-{ts}.mp4"
@@ -86,9 +102,9 @@ class Recorder:
                 return
             try:
                 self._proc.stdin.write(frame.tobytes())
-            except BrokenPipeError:
-                logger.warning("recorder pipe broken")
-                self._proc = None
+            except (BrokenPipeError, ValueError, OSError) as e:
+                logger.warning("recorder pipe failed (%s); ending clip", e)
+                self._cleanup_proc()
 
     def stop(self) -> Optional[Path]:
         with self._lock:
@@ -97,19 +113,41 @@ class Recorder:
             path = self._path
             try:
                 if self._proc.stdin:
-                    self._proc.stdin.close()
+                    try:
+                        self._proc.stdin.close()
+                    except Exception:
+                        pass
                 self._proc.wait(timeout=10)
-            except Exception as e:
-                logger.warning("ffmpeg stop issue: %s", e)
+            except subprocess.TimeoutExpired:
+                logger.warning("ffmpeg did not exit in 10s; killing")
                 try:
                     self._proc.kill()
-                except Exception:
-                    pass
-            self._proc = None
-            self._path = None
-            self._started_at = None
+                    self._proc.wait(timeout=5)
+                except Exception as e:
+                    logger.warning("ffmpeg kill failed: %s", e)
+            except Exception as e:
+                logger.warning("ffmpeg stop issue: %s", e)
+            self._cleanup_proc()
             logger.info("recording stopped: %s", path)
             return path
+
+    def _cleanup_proc(self) -> None:
+        """Drop process refs and reset state. Caller holds the lock (or is single-threaded)."""
+        proc = self._proc
+        self._proc = None
+        self._path = None
+        self._started_at = None
+        if proc is None:
+            return
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+        except Exception:
+            pass
 
     @property
     def elapsed_seconds(self) -> float:

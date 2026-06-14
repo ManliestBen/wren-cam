@@ -109,6 +109,27 @@ def health():
     return {"ok": True, "picamera2": HAS_PICAMERA}
 
 
+@app.get("/api/logs")
+def get_logs(lines: int = 200):
+    """Return the last N lines of the rotating log file as plain text."""
+    from .logging_setup import get_log_path
+    path = get_log_path()
+    if path is None or not path.exists():
+        raise HTTPException(404, "log file not available")
+    n = max(1, min(int(lines), 5000))
+    try:
+        with path.open("rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            chunk = min(size, 256 * 1024)
+            f.seek(size - chunk)
+            data = f.read().decode("utf-8", errors="replace")
+        tail = "\n".join(data.splitlines()[-n:])
+        return Response(content=tail, media_type="text/plain")
+    except Exception as e:
+        raise HTTPException(500, f"failed to read log: {e}")
+
+
 @app.get("/api/status")
 def status():
     return {
@@ -294,9 +315,7 @@ if WEB_DIR.exists():
 
 def run() -> None:
     import uvicorn
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    from .logging_setup import configure as configure_logging
+    configure_logging()
     cfg = state.config
     uvicorn.run(app, host=cfg.host, port=cfg.port, log_level="info")

@@ -135,64 +135,87 @@ class CameraWorker(threading.Thread):
     def run(self) -> None:
         target_dt = 1.0 / max(self.camera.framerate, 1)
         stream_dt = 1.0 / max(self.stream_maxrate, 1)
-        prev_capture_ts = 0.0
-        last_tick = 0.0
+        state = {"prev_capture_ts": 0.0, "last_tick": 0.0, "consecutive_failures": 0}
 
         while not self._stop.is_set():
-            now = time.time()
-            sleep_for = target_dt - (now - last_tick)
-            if sleep_for > 0:
-                time.sleep(sleep_for)
-            last_tick = time.time()
+            try:
+                self._tick(target_dt, stream_dt, state)
+                state["consecutive_failures"] = 0
+            except Exception:
+                state["consecutive_failures"] += 1
+                logger.exception(
+                    "cam%d tick failed (%d in a row); continuing",
+                    self.cfg.id, state["consecutive_failures"],
+                )
+                # Exponential backoff capped at 10 s so we don't busy-spin on persistent errors.
+                time.sleep(min(10.0, 0.5 * state["consecutive_failures"]))
 
-            arr = self.camera.capture_array()
-            if arr is None:
-                time.sleep(0.5)
-                continue
+        try:
+            if self.recorder.is_recording():
+                self.recorder.stop()
+        except Exception:
+            logger.exception("cam%d: recorder stop on exit failed", self.cfg.id)
 
-            # Track actual delivered fps (EMA) for recorder timestamp accuracy
-            now = time.time()
-            if prev_capture_ts > 0:
-                dt = now - prev_capture_ts
-                if dt > 0:
-                    inst_fps = 1.0 / dt
-                    self._measured_fps = 0.9 * self._measured_fps + 0.1 * inst_fps
-            prev_capture_ts = now
+    def _tick(self, target_dt: float, stream_dt: float, state: dict) -> None:
+        now = time.time()
+        sleep_for = target_dt - (now - state["last_tick"])
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+        state["last_tick"] = time.time()
 
-            # Rate-limited JPEG encode for the live stream
-            if now - self._last_jpeg_ts >= stream_dt:
-                jpeg = self._encode_jpeg(arr)
-                if jpeg is not None:
-                    with self._frame_cv:
-                        self._latest_jpeg = jpeg
-                        self._frame_cv.notify_all()
-                    self._last_jpeg_ts = now
+        arr = self.camera.capture_array()
+        if arr is None:
+            time.sleep(0.5)
+            return
 
-            if self.cfg.motion_enabled:
-                detected, changed = self.detector.update(arr)
-                self._last_changed = changed
-                gap = self.cfg.event_gap_seconds
-                max_clip = self.cfg.max_clip_seconds
+        now = time.time()
+        prev = state["prev_capture_ts"]
+        if prev > 0:
+            dt = now - prev
+            if dt > 0:
+                self._measured_fps = 0.9 * self._measured_fps + 0.1 * (1.0 / dt)
+        state["prev_capture_ts"] = now
 
-                if detected:
-                    self._last_motion_ts = time.time()
-                    if not self._motion_active:
-                        self._motion_active = True
-                        fps_for_recording = max(1, int(round(self._measured_fps)))
-                        self.recorder.start(
-                            self.camera.width, self.camera.height, fps_for_recording,
-                        )
-                if self._motion_active:
-                    self.recorder.write_frame(arr)
-                    elapsed = self.recorder.elapsed_seconds
-                    no_motion_for = time.time() - self._last_motion_ts
-                    if no_motion_for >= gap or (max_clip > 0 and elapsed >= max_clip):
-                        self.recorder.stop()
-                        self._motion_active = False
-            else:
-                if self.recorder.is_recording():
-                    self.recorder.stop()
-                    self._motion_active = False
+        if now - self._last_jpeg_ts >= stream_dt:
+            jpeg = self._encode_jpeg(arr)
+            if jpeg is not None:
+                with self._frame_cv:
+                    self._latest_jpeg = jpeg
+                    self._frame_cv.notify_all()
+                self._last_jpeg_ts = now
 
-        if self.recorder.is_recording():
-            self.recorder.stop()
+        if not self.cfg.motion_enabled:
+            if self.recorder.is_recording():
+                self.recorder.stop()
+                self._motion_active = False
+            return
+
+        try:
+            detected, changed = self.detector.update(arr)
+        except Exception:
+            logger.exception("cam%d motion detector failed", self.cfg.id)
+            return
+        self._last_changed = changed
+
+        if detected:
+            self._last_motion_ts = time.time()
+            if not self._motion_active:
+                fps_for_recording = max(1, int(round(self._measured_fps)))
+                started = self.recorder.start(
+                    self.camera.width, self.camera.height, fps_for_recording,
+                )
+                self._motion_active = started is not None
+
+        if self._motion_active and self.recorder.is_recording():
+            self.recorder.write_frame(arr)
+            elapsed = self.recorder.elapsed_seconds
+            no_motion_for = time.time() - self._last_motion_ts
+            if (
+                no_motion_for >= self.cfg.event_gap_seconds
+                or (self.cfg.max_clip_seconds > 0 and elapsed >= self.cfg.max_clip_seconds)
+            ):
+                self.recorder.stop()
+                self._motion_active = False
+        elif self._motion_active and not self.recorder.is_recording():
+            # Recorder died mid-clip (broken pipe, disk full). Reset state.
+            self._motion_active = False
