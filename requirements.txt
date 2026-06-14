@@ -1,0 +1,12 @@
+# wren-cam — Raspberry Pi 5 all-in-one bird cam
+# Python 3.11+
+#
+# picamera2 is installed via apt on Pi OS, not pip:
+#   sudo apt install -y python3-picamera2 python3-libcamera ffmpeg
+# When this venv is created, use --system-site-packages so picamera2 is visible.
+
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+numpy>=1.24.0
+Pillow>=10.0.0
+pydantic>=2.5.0

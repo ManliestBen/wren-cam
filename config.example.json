@@ -1,0 +1,23 @@
+{
+  "host": "0.0.0.0",
+  "port": 8080,
+  "recordings_dir": "./recordings",
+  "stream_quality": 80,
+  "stream_maxrate": 15,
+  "cameras": [
+    {
+      "id": 0,
+      "name": "Wren Cam 0",
+      "width": 1280,
+      "height": 720,
+      "framerate": 15,
+      "autofocus": "continuous",
+      "lens_position": 0.0,
+      "motion_enabled": true,
+      "motion_threshold": 1500,
+      "noise_level": 32,
+      "event_gap_seconds": 30,
+      "max_clip_seconds": 300
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+recordings/
+config.json
+*.log
+.DS_Store

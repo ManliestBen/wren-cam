@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>wren-cam</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>wren-cam</h1>
+    <nav>
+      <button data-tab="live" class="active">Live</button>
+      <button data-tab="settings">Settings</button>
+      <button data-tab="recordings">Recordings</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="tab-live" class="tab active">
+      <div id="cam-grid"></div>
+    </section>
+
+    <section id="tab-settings" class="tab">
+      <div id="app-settings"></div>
+      <div id="camera-settings"></div>
+    </section>
+
+    <section id="tab-recordings" class="tab">
+      <div class="row">
+        <button id="refresh-recordings">Refresh</button>
+        <span id="recordings-count"></span>
+      </div>
+      <ul id="recordings-list"></ul>
+    </section>
+  </main>
+
+  <div id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
