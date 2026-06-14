@@ -145,6 +145,8 @@ function renderCameraPanel(cam) {
       </select></div>
     <div class="field"><label>Lens position (manual)</label>
       <input type="number" data-k="lens_position" step="0.1" min="0" max="15" value="${cam.lens_position}" /></div>
+    <div class="field"><label>Rotate 180° (upside-down mount)</label>
+      <input type="checkbox" data-k="rotate_180" ${cam.rotate_180 ? "checked" : ""} /></div>
     <hr style="border-color:#333"/>
     <div class="field"><label>Motion recording</label>
       <input type="checkbox" data-k="motion_enabled" ${cam.motion_enabled ? "checked" : ""} /></div>

@@ -13,6 +13,7 @@
       "framerate": 15,
       "autofocus": "continuous",
       "lens_position": 0.0,
+      "rotate_180": false,
       "motion_enabled": true,
       "motion_threshold": 1500,
       "noise_level": 32,

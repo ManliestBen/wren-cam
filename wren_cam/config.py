@@ -19,6 +19,7 @@ class CameraConfig(BaseModel):
     framerate: int = Field(default=15, ge=2, le=60)
     autofocus: Literal["continuous", "manual"] = "continuous"
     lens_position: float = Field(default=0.0, ge=0.0, le=15.0)
+    rotate_180: bool = False
     motion_enabled: bool = True
     motion_threshold: int = Field(default=1500, ge=1, le=10_000_000)
     noise_level: int = Field(default=32, ge=1, le=255)

@@ -15,10 +15,12 @@ logger = logging.getLogger(__name__)
 try:
     from picamera2 import Picamera2  # type: ignore
     from libcamera import controls as libc_controls  # type: ignore
+    from libcamera import Transform  # type: ignore
     HAS_PICAMERA = True
 except ImportError:
     Picamera2 = None  # type: ignore
     libc_controls = None  # type: ignore
+    Transform = None  # type: ignore
     HAS_PICAMERA = False
 
 
@@ -45,6 +47,7 @@ class Camera:
         framerate: int,
         autofocus: str = "continuous",
         lens_position: float = 0.0,
+        rotate_180: bool = False,
     ) -> bool:
         if not HAS_PICAMERA:
             logger.warning("picamera2 unavailable; camera %d disabled", self.index)
@@ -52,10 +55,13 @@ class Camera:
         with self._lock:
             try:
                 self._cam = Picamera2(self.index)
-                cfg = self._cam.create_video_configuration(
+                kwargs = dict(
                     main={"size": (width, height), "format": "RGB888"},
                     controls={"FrameRate": float(framerate)},
                 )
+                if rotate_180:
+                    kwargs["transform"] = Transform(hflip=True, vflip=True)
+                cfg = self._cam.create_video_configuration(**kwargs)
                 self._cam.configure(cfg)
                 self._apply_focus(autofocus, lens_position)
                 self._cam.start()
@@ -104,10 +110,11 @@ class Camera:
         framerate: int,
         autofocus: str,
         lens_position: float,
+        rotate_180: bool = False,
     ) -> bool:
         self.stop()
         time.sleep(0.5)
-        return self.start(width, height, framerate, autofocus, lens_position)
+        return self.start(width, height, framerate, autofocus, lens_position, rotate_180)
 
     def capture_array(self) -> Optional[np.ndarray]:
         cam = self._cam
@@ -155,6 +162,7 @@ class CameraManager:
             ok = cam.start(
                 cc.width, cc.height, cc.framerate,
                 cc.autofocus, cc.lens_position,
+                cc.rotate_180,
             )
             if ok:
                 self.cameras[cc.id] = cam
@@ -172,4 +180,4 @@ class CameraManager:
         if cam is None:
             cam = Camera(cc.id)
             self.cameras[cam_id] = cam
-        return cam.restart(cc.width, cc.height, cc.framerate, cc.autofocus, cc.lens_position)
+        return cam.restart(cc.width, cc.height, cc.framerate, cc.autofocus, cc.lens_position, cc.rotate_180)

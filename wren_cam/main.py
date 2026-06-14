@@ -140,6 +140,7 @@ class CameraPatch(BaseModel):
     framerate: Optional[int] = None
     autofocus: Optional[str] = None
     lens_position: Optional[float] = None
+    rotate_180: Optional[bool] = None
     motion_enabled: Optional[bool] = None
     motion_threshold: Optional[int] = None
     noise_level: Optional[int] = None
@@ -155,7 +156,7 @@ def patch_camera(cam_id: int, patch: CameraPatch):
     except KeyError:
         raise HTTPException(404, f"camera {cam_id} not configured")
 
-    needs_restart = any(k in fields for k in ("width", "height", "framerate"))
+    needs_restart = any(k in fields for k in ("width", "height", "framerate", "rotate_180"))
     if needs_restart:
         state.restart_camera(cam_id)
     else:

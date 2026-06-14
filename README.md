@@ -84,6 +84,7 @@ Config lives in `config.json` (path overridable with `WREN_CAM_CONFIG`). Changes
 | `framerate`          | `15`          | Capture fps                                                           |
 | `autofocus`          | `continuous`  | `continuous` or `manual` (requires Pi Camera Module 3)                |
 | `lens_position`      | `0.0`         | Manual focus; 0 ≈ infinity, ~0.5 ≈ 50 cm                              |
+| `rotate_180`         | `false`       | Flip video 180° for an upside-down camera                             |
 | `motion_enabled`     | `true`        | Toggle motion-triggered recording                                     |
 | `motion_threshold`   | `1500`        | Changed pixels needed to declare motion                               |
 | `noise_level`        | `32`          | Per-pixel intensity delta filtered as noise                           |
