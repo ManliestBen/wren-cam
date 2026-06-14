@@ -29,6 +29,7 @@ class WorkerStatus:
     width: int
     height: int
     framerate: int
+    measured_fps: float
 
 
 class CameraWorker(threading.Thread):
@@ -40,12 +41,14 @@ class CameraWorker(threading.Thread):
         cfg: CameraConfig,
         recordings_dir: Path,
         stream_quality: int,
+        stream_maxrate: int,
     ) -> None:
         super().__init__(daemon=True, name=f"cam{cfg.id}-worker")
         self.camera = camera
         self.cfg = cfg
         self.recordings_dir = Path(recordings_dir)
         self.stream_quality = stream_quality
+        self.stream_maxrate = max(1, stream_maxrate)
 
         self.detector = MotionDetector(
             threshold=cfg.motion_threshold,
@@ -56,9 +59,11 @@ class CameraWorker(threading.Thread):
         self._stop = threading.Event()
         self._frame_cv = threading.Condition()
         self._latest_jpeg: Optional[bytes] = None
+        self._last_jpeg_ts: float = 0.0
         self._last_motion_ts: float = 0.0
         self._motion_active = False
         self._last_changed = 0
+        self._measured_fps: float = float(camera.framerate)
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -97,13 +102,26 @@ class CameraWorker(threading.Thread):
             width=self.camera.width,
             height=self.camera.height,
             framerate=self.camera.framerate,
+            measured_fps=round(self._measured_fps, 2),
         )
 
-    def run(self) -> None:
-        from PIL import Image  # local import; not needed in tests
+    def _encode_jpeg(self, arr) -> Optional[bytes]:
+        from PIL import Image
+        try:
+            img = Image.fromarray(arr)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=self.stream_quality)
+            return buf.getvalue()
+        except Exception as e:
+            logger.debug("cam%d jpeg encode failed: %s", self.cfg.id, e)
+            return None
 
+    def run(self) -> None:
         target_dt = 1.0 / max(self.camera.framerate, 1)
+        stream_dt = 1.0 / max(self.stream_maxrate, 1)
+        prev_capture_ts = 0.0
         last_tick = 0.0
+
         while not self._stop.is_set():
             now = time.time()
             sleep_for = target_dt - (now - last_tick)
@@ -116,18 +134,23 @@ class CameraWorker(threading.Thread):
                 time.sleep(0.5)
                 continue
 
-            try:
-                img = Image.fromarray(arr)
-                buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=self.stream_quality)
-                jpeg = buf.getvalue()
-            except Exception as e:
-                logger.debug("cam%d jpeg encode failed: %s", self.cfg.id, e)
-                continue
+            # Track actual delivered fps (EMA) for recorder timestamp accuracy
+            now = time.time()
+            if prev_capture_ts > 0:
+                dt = now - prev_capture_ts
+                if dt > 0:
+                    inst_fps = 1.0 / dt
+                    self._measured_fps = 0.9 * self._measured_fps + 0.1 * inst_fps
+            prev_capture_ts = now
 
-            with self._frame_cv:
-                self._latest_jpeg = jpeg
-                self._frame_cv.notify_all()
+            # Rate-limited JPEG encode for the live stream
+            if now - self._last_jpeg_ts >= stream_dt:
+                jpeg = self._encode_jpeg(arr)
+                if jpeg is not None:
+                    with self._frame_cv:
+                        self._latest_jpeg = jpeg
+                        self._frame_cv.notify_all()
+                    self._last_jpeg_ts = now
 
             if self.cfg.motion_enabled:
                 detected, changed = self.detector.update(arr)
@@ -139,8 +162,9 @@ class CameraWorker(threading.Thread):
                     self._last_motion_ts = time.time()
                     if not self._motion_active:
                         self._motion_active = True
+                        fps_for_recording = max(1, int(round(self._measured_fps)))
                         self.recorder.start(
-                            self.camera.width, self.camera.height, self.camera.framerate,
+                            self.camera.width, self.camera.height, fps_for_recording,
                         )
                 if self._motion_active:
                     self.recorder.write_frame(arr)

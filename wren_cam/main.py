@@ -46,6 +46,7 @@ class WrenCamApp:
                 cfg=cc,
                 recordings_dir=Path(cfg.recordings_dir),
                 stream_quality=cfg.stream_quality,
+                stream_maxrate=cfg.stream_maxrate,
             )
             worker.start()
             self.workers[cc.id] = worker
@@ -82,6 +83,7 @@ class WrenCamApp:
             cfg=cc,
             recordings_dir=Path(cfg.recordings_dir),
             stream_quality=cfg.stream_quality,
+            stream_maxrate=cfg.stream_maxrate,
         )
         new_worker.start()
         self.workers[cam_id] = new_worker
