@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -52,11 +53,22 @@ class WrenCamApp:
             self.workers[cc.id] = worker
 
     def stop(self) -> None:
+        # 1) Stop hardware encoders first — picamera2 doesn't tolerate
+        #    having start_encoder still active when the camera is closed.
+        for w in self.workers.values():
+            try:
+                if w.recorder.is_recording():
+                    w.recorder.stop()
+            except Exception:
+                logger.exception("error stopping recorder during shutdown")
+        # 2) Signal worker threads, then join briefly. daemon=True means a
+        #    stuck thread won't block process exit.
         for w in self.workers.values():
             w.request_stop()
         for w in self.workers.values():
-            w.join(timeout=5)
+            w.join(timeout=3)
         self.workers.clear()
+        # 3) Now safe to close cameras.
         self.cam_manager.stop_all()
 
     def restart_camera(self, cam_id: int) -> None:
@@ -67,8 +79,13 @@ class WrenCamApp:
             raise KeyError(cam_id)
         worker = self.workers.get(cam_id)
         if worker is not None:
+            try:
+                if worker.recorder.is_recording():
+                    worker.recorder.stop()
+            except Exception:
+                logger.exception("cam%d: recorder stop during restart failed", cam_id)
             worker.request_stop()
-            worker.join(timeout=5)
+            worker.join(timeout=3)
         cam = self.cam_manager.get(cam_id)
         if cam is not None:
             self.cam_manager.restart(cam_id, cc)
@@ -226,22 +243,28 @@ def save_snapshot(cam_id: int):
 
 
 @app.get("/snapshot/{cam_id}.jpg")
-def snapshot(cam_id: int):
+async def snapshot(cam_id: int):
     worker = state.workers.get(cam_id)
     if worker is None:
         raise HTTPException(404, "camera not available")
-    jpeg = worker.latest_jpeg or worker.wait_for_frame(timeout=3.0)
+    jpeg = worker.latest_jpeg
+    if not jpeg:
+        # Wait for a frame off the event loop so we don't block other requests.
+        jpeg = await asyncio.to_thread(worker.wait_for_frame, 3.0)
     if not jpeg:
         raise HTTPException(503, "no frame yet")
     return Response(content=jpeg, media_type="image/jpeg")
 
 
-def _mjpeg_generator(worker: CameraWorker, max_fps: int):
+async def _mjpeg_generator_async(worker: CameraWorker, max_fps: int):
     boundary = b"--frame"
     min_dt = 1.0 / max(max_fps, 1)
     last = 0.0
     while True:
-        jpeg = worker.wait_for_frame(timeout=5.0)
+        # Each viewer awaits its own frame on the event loop. asyncio.to_thread
+        # bridges to the blocking condition variable in the worker without
+        # pinning a starlette threadpool worker for the connection's lifetime.
+        jpeg = await asyncio.to_thread(worker.wait_for_frame, 5.0)
         if jpeg is None:
             continue
         now = time.time()
@@ -257,13 +280,13 @@ def _mjpeg_generator(worker: CameraWorker, max_fps: int):
 
 
 @app.get("/stream/{cam_id}")
-def stream(cam_id: int):
+async def stream(cam_id: int):
     worker = state.workers.get(cam_id)
     if worker is None:
         raise HTTPException(404, "camera not available")
     max_fps = state.config.stream_maxrate
     return StreamingResponse(
-        _mjpeg_generator(worker, max_fps),
+        _mjpeg_generator_async(worker, max_fps),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
 

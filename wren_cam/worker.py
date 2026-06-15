@@ -109,10 +109,42 @@ class CameraWorker(threading.Thread):
             frames_dropped=self.recorder.frames_dropped,
         )
 
+    # When the captured frame is huge, JPEG-encoding it every iteration eats
+    # the worker loop's time budget. Cap the stream dimension to this; clip
+    # quality is still excellent in a browser tile.
+    STREAM_MAX_DIM = 1280
+
+    # Motion only needs enough resolution to count changed pixels reliably.
+    # Cap to this on the long edge — keeps numpy work cheap at any camera res.
+    MOTION_MAX_DIM = 480
+
+    def _downsample_for_stream(self, arr):
+        h, w = arr.shape[:2]
+        long_edge = max(w, h)
+        if long_edge <= self.STREAM_MAX_DIM:
+            return arr
+        from PIL import Image
+        scale = self.STREAM_MAX_DIM / long_edge
+        new_w = max(2, int(w * scale)) & ~1  # keep even (h264-friendly habits)
+        new_h = max(2, int(h * scale)) & ~1
+        img = Image.fromarray(arr).resize((new_w, new_h), Image.BILINEAR)
+        import numpy as _np
+        return _np.asarray(img)
+
+    def _downsample_for_motion(self, arr):
+        h, w = arr.shape[:2]
+        long_edge = max(w, h)
+        if long_edge <= self.MOTION_MAX_DIM:
+            return arr
+        # Stride-based downsample — extremely cheap (no copy, no PIL).
+        step = max(1, long_edge // self.MOTION_MAX_DIM)
+        return arr[::step, ::step]
+
     def _encode_jpeg(self, arr, quality: Optional[int] = None) -> Optional[bytes]:
         from PIL import Image
         try:
-            img = Image.fromarray(arr)
+            small = self._downsample_for_stream(arr)
+            img = Image.fromarray(small)
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=quality or self.stream_quality)
             return buf.getvalue()
@@ -195,19 +227,30 @@ class CameraWorker(threading.Thread):
             return
 
         try:
-            detected, changed = self.detector.update(arr)
+            motion_arr = self._downsample_for_motion(arr)
+            # Scale internal threshold so the user-facing motion_threshold
+            # value stays calibrated to "changed pixels at the camera resolution"
+            # regardless of how much we internally downsampled for speed.
+            full_px = arr.shape[0] * arr.shape[1]
+            motion_px = motion_arr.shape[0] * motion_arr.shape[1]
+            scale = motion_px / full_px if full_px else 1.0
+            self.detector.threshold = max(1, int(self.cfg.motion_threshold * scale))
+            detected, changed = self.detector.update(motion_arr)
         except Exception:
             logger.exception("cam%d motion detector failed", self.cfg.id)
             return
-        self._last_changed = changed
+        # Report changed pixels at the camera-resolution equivalent so the
+        # Δ readout in the UI matches the user's threshold setting.
+        self._last_changed = int(changed / scale) if scale else changed
 
         if detected:
             self._last_motion_ts = time.time()
             if not self._motion_active:
-                fps_for_recording = max(1, int(round(self._measured_fps)))
+                # Hardware encoder runs at the camera's configured framerate,
+                # not the worker loop's measured rate — log accordingly.
                 started = self.recorder.start(
                     self.camera.picam2,
-                    self.camera.width, self.camera.height, fps_for_recording,
+                    self.camera.width, self.camera.height, self.camera.framerate,
                 )
                 self._motion_active = started is not None
 

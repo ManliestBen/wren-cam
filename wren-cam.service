@@ -18,7 +18,14 @@ ExecStart=/home/pi/wren-cam/.venv/bin/python -m wren_cam
 # Always come back up after any exit, but wait 10s so we don't restart-spam
 Restart=always
 RestartSec=10
-TimeoutStopSec=20
+TimeoutStopSec=10
+
+# Send SIGTERM to the main process; if it doesn't exit cleanly within
+# TimeoutStopSec, SIGKILL the entire cgroup. This guarantees any orphaned
+# ffmpeg child (spawned by FfmpegOutput) gets reaped — critical to avoid
+# leaking child processes that can wedge the V4L2 pipeline on next start.
+KillMode=mixed
+KillSignal=SIGTERM
 
 # Resource caps so a runaway wren-cam can't take down the whole Pi.
 # Pi 5 has 4 cores → CPUQuota=300% leaves a full core for the OS/SSH.
