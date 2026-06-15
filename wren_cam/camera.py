@@ -147,6 +147,11 @@ class Camera:
     def latest_jpeg(self) -> Optional[bytes]:
         return self._latest_jpeg
 
+    @property
+    def picam2(self):
+        """Underlying Picamera2 instance — used by the hardware H.264 recorder."""
+        return self._cam
+
 
 class CameraManager:
     """Owns all configured cameras."""

@@ -15,6 +15,18 @@ _DEFAULT_LOG_PATH = "./wren-cam.log"
 _log_path: Optional[Path] = None
 
 
+class _FlushingRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """Flushes after every emit so a system freeze can't lose recent log lines."""
+
+    def emit(self, record: logging.LogRecord) -> None:  # noqa: D401
+        super().emit(record)
+        try:
+            if self.stream:
+                self.stream.flush()
+        except Exception:
+            pass
+
+
 def get_log_path() -> Optional[Path]:
     return _log_path
 
@@ -36,7 +48,7 @@ def configure(level: str = "INFO", log_file: Optional[str] = None) -> Optional[P
         try:
             path = Path(log_file).expanduser().resolve()
             path.parent.mkdir(parents=True, exist_ok=True)
-            file_h = logging.handlers.RotatingFileHandler(
+            file_h = _FlushingRotatingFileHandler(
                 path,
                 maxBytes=5 * 1024 * 1024,
                 backupCount=5,

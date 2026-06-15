@@ -206,12 +206,14 @@ class CameraWorker(threading.Thread):
             if not self._motion_active:
                 fps_for_recording = max(1, int(round(self._measured_fps)))
                 started = self.recorder.start(
+                    self.camera.picam2,
                     self.camera.width, self.camera.height, fps_for_recording,
                 )
                 self._motion_active = started is not None
 
+        # With the hardware encoder, frames flow camera → encoder directly;
+        # the worker only needs to manage start/stop boundaries.
         if self._motion_active and self.recorder.is_recording():
-            self.recorder.write_frame(arr)
             elapsed = self.recorder.elapsed_seconds
             no_motion_for = time.time() - self._last_motion_ts
             if (
@@ -221,5 +223,5 @@ class CameraWorker(threading.Thread):
                 self.recorder.stop()
                 self._motion_active = False
         elif self._motion_active and not self.recorder.is_recording():
-            # Recorder died mid-clip (broken pipe, disk full). Reset state.
+            # Recorder failed to start or died mid-clip; reset state.
             self._motion_active = False
