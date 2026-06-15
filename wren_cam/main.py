@@ -171,16 +171,31 @@ class CameraPatch(BaseModel):
     max_clip_seconds: Optional[int] = None
 
 
+RESTART_KEYS = ("width", "height", "framerate", "rotate_180")
+
+
 @app.patch("/api/cameras/{cam_id}")
 def patch_camera(cam_id: int, patch: CameraPatch):
     fields = patch.model_dump(exclude_none=True)
+    old_cfg = next((c for c in state.config.cameras if c.id == cam_id), None)
+    if old_cfg is None:
+        raise HTTPException(404, f"camera {cam_id} not configured")
     try:
         new_cfg = state.store.update_camera(cam_id, **fields)
     except KeyError:
         raise HTTPException(404, f"camera {cam_id} not configured")
 
-    needs_restart = any(k in fields for k in ("width", "height", "framerate", "rotate_180"))
+    # Only restart the camera if a hardware-level setting actually CHANGED VALUE.
+    # The UI sends every field on save, so checking just the keys would trigger
+    # unnecessary picamera2 open/close cycles that leak libcamera resources.
+    needs_restart = any(
+        getattr(old_cfg, k) != getattr(new_cfg, k) for k in RESTART_KEYS
+    )
     if needs_restart:
+        changed = [
+            k for k in RESTART_KEYS if getattr(old_cfg, k) != getattr(new_cfg, k)
+        ]
+        logger.info("cam%d: restarting (changed: %s)", cam_id, ",".join(changed))
         state.restart_camera(cam_id)
     else:
         worker = state.workers.get(cam_id)

@@ -30,6 +30,8 @@ class WorkerStatus:
     height: int
     framerate: int
     measured_fps: float
+    frames_written: int
+    frames_dropped: int
 
 
 class CameraWorker(threading.Thread):
@@ -103,6 +105,8 @@ class CameraWorker(threading.Thread):
             height=self.camera.height,
             framerate=self.camera.framerate,
             measured_fps=round(self._measured_fps, 2),
+            frames_written=self.recorder.frames_written,
+            frames_dropped=self.recorder.frames_dropped,
         )
 
     def _encode_jpeg(self, arr, quality: Optional[int] = None) -> Optional[bytes]:
