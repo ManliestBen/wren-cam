@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
+from datetime import date as _date
 from pathlib import Path
 from typing import Optional
 
@@ -293,9 +295,21 @@ async def stream(cam_id: int):
 
 _MEDIA_EXTS = {".mp4": "video/mp4", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
 
+# Filenames encode the capture time, e.g. cam0-20260624-143022.mp4 or
+# cam0-snap-20260624-143022.jpg. Use that for date grouping when present.
+_DATE_RE = re.compile(r"-(\d{4})(\d{2})(\d{2})-\d{6}")
 
-@app.get("/api/recordings")
-def list_recordings():
+
+def _recording_date(name: str, mtime: float) -> str:
+    """Return the capture date as YYYY-MM-DD, from the filename or mtime."""
+    m = _DATE_RE.search(name)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    return _date.fromtimestamp(mtime).isoformat()
+
+
+def _media_entries() -> list[dict]:
+    """All recordings as dicts, newest first."""
     cfg = state.config
     rec_dir = Path(cfg.recordings_dir)
     if not rec_dir.exists():
@@ -304,20 +318,47 @@ def list_recordings():
     for p in rec_dir.iterdir():
         if not p.is_file():
             continue
-        ext = p.suffix.lower()
-        if ext not in _MEDIA_EXTS:
+        if p.suffix.lower() not in _MEDIA_EXTS:
             continue
-        entries.append(p)
-    entries.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-    return [
-        {
-            "name": p.name,
-            "size": p.stat().st_size,
-            "modified": int(p.stat().st_mtime),
-            "kind": "video" if p.suffix.lower() == ".mp4" else "photo",
-        }
-        for p in entries
-    ]
+        st = p.stat()
+        entries.append(
+            {
+                "name": p.name,
+                "size": st.st_size,
+                "modified": int(st.st_mtime),
+                "kind": "video" if p.suffix.lower() == ".mp4" else "photo",
+                "date": _recording_date(p.name, st.st_mtime),
+            }
+        )
+    entries.sort(key=lambda e: e["modified"], reverse=True)
+    return entries
+
+
+@app.get("/api/recordings/dates")
+def list_recording_dates():
+    """Distinct dates that have recordings, newest first, with counts."""
+    counts: dict[str, int] = {}
+    for e in _media_entries():
+        counts[e["date"]] = counts.get(e["date"], 0) + 1
+    return [{"date": d, "count": counts[d]} for d in sorted(counts, reverse=True)]
+
+
+@app.get("/api/recordings")
+def list_recordings(
+    date: Optional[str] = None, limit: int = 20, offset: int = 0
+):
+    entries = _media_entries()
+    if date:
+        entries = [e for e in entries if e["date"] == date]
+    total = len(entries)
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    return {
+        "items": entries[offset : offset + limit],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    }
 
 
 def _safe_recording_path(name: str) -> Path:

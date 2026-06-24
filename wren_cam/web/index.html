@@ -34,9 +34,17 @@
     <section id="tab-recordings" class="tab">
       <div class="row">
         <button id="refresh-recordings">Refresh</button>
+        <label class="date-pick">Date
+          <select id="recordings-date"></select>
+        </label>
         <span id="recordings-count"></span>
       </div>
       <ul id="recordings-list"></ul>
+      <div class="row pager" id="recordings-pager" hidden>
+        <button id="recordings-prev" class="secondary">← Newer</button>
+        <span id="recordings-page"></span>
+        <button id="recordings-next" class="secondary">Older →</button>
+      </div>
     </section>
   </main>
 

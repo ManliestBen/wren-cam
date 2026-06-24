@@ -163,6 +163,18 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .row { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
 
+.date-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.date-pick select { width: auto; min-width: 11rem; }
+
+.pager { justify-content: center; margin-top: 1rem; }
+.pager span { color: var(--muted); font-size: 0.9rem; min-width: 8rem; text-align: center; }
+
 #recordings-list { list-style: none; padding: 0; margin: 0; }
 
 .recording {

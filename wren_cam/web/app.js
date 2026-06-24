@@ -239,50 +239,127 @@ async function restartCamera(camId) {
 }
 
 // ---- recordings ----
-async function loadRecordings() {
+const REC_PAGE_SIZE = 12;
+const recState = { date: "", offset: 0 };
+
+// Reload the date dropdown, keeping the current selection if it still exists,
+// otherwise defaulting to the newest date.
+async function loadRecordingDates() {
+  const sel = $("#recordings-date");
+  const dates = await api("/api/recordings/dates");
+  sel.innerHTML = "";
+  if (!dates.length) {
+    recState.date = "";
+    sel.innerHTML = `<option value="">No recordings</option>`;
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  dates.forEach((d) => {
+    const opt = document.createElement("option");
+    opt.value = d.date;
+    opt.textContent = `${d.date} (${d.count})`;
+    sel.appendChild(opt);
+  });
+  if (!dates.some((d) => d.date === recState.date)) {
+    recState.date = dates[0].date;
+  }
+  sel.value = recState.date;
+}
+
+function renderRecording(f) {
+  const li = document.createElement("li");
+  li.className = "recording";
+  const url = `/api/recordings/${encodeURIComponent(f.name)}`;
+  const media = f.kind === "photo"
+    ? `<img class="snapshot" loading="lazy" src="${url}" alt="${f.name}" />`
+    : `<video controls preload="none" src="${url}"></video>`;
+  li.innerHTML = `
+    <header>
+      <strong>${f.name}</strong>
+      <span>${formatBytes(f.size)} · ${formatTime(f.modified)}</span>
+    </header>
+    ${media}
+    <div class="row" style="margin-top:0.5rem">
+      <a href="${url}" download><button class="secondary">Download</button></a>
+      <button class="danger" data-name="${f.name}">Delete</button>
+    </div>
+  `;
+  li.querySelector(".danger").onclick = async () => {
+    if (!confirm(`Delete ${f.name}?`)) return;
+    try {
+      await api(`/api/recordings/${encodeURIComponent(f.name)}`, { method: "DELETE" });
+      toast("Deleted");
+      await loadRecordingDates();
+      renderRecordingsPage();
+    } catch (e) {
+      toast("Delete failed: " + e.message);
+    }
+  };
+  return li;
+}
+
+// Fetch and render the current page for the selected date.
+async function renderRecordingsPage() {
   const list = $("#recordings-list");
   const count = $("#recordings-count");
+  const pager = $("#recordings-pager");
   list.innerHTML = "Loading…";
+  if (!recState.date) {
+    list.innerHTML = "<li>No recordings yet.</li>";
+    count.textContent = "0 files";
+    pager.hidden = true;
+    return;
+  }
   try {
-    const files = await api("/api/recordings");
-    count.textContent = `${files.length} file${files.length === 1 ? "" : "s"}`;
-    list.innerHTML = "";
-    files.forEach((f) => {
-      const li = document.createElement("li");
-      li.className = "recording";
-      const url = `/api/recordings/${encodeURIComponent(f.name)}`;
-      const media = f.kind === "photo"
-        ? `<img class="snapshot" src="${url}" alt="${f.name}" />`
-        : `<video controls preload="none" src="${url}"></video>`;
-      li.innerHTML = `
-        <header>
-          <strong>${f.name}</strong>
-          <span>${formatBytes(f.size)} · ${formatTime(f.modified)}</span>
-        </header>
-        ${media}
-        <div class="row" style="margin-top:0.5rem">
-          <a href="${url}" download><button class="secondary">Download</button></a>
-          <button class="danger" data-name="${f.name}">Delete</button>
-        </div>
-      `;
-      li.querySelector(".danger").onclick = async () => {
-        if (!confirm(`Delete ${f.name}?`)) return;
-        try {
-          await api(`/api/recordings/${encodeURIComponent(f.name)}`, { method: "DELETE" });
-          toast("Deleted");
-          loadRecordings();
-        } catch (e) {
-          toast("Delete failed: " + e.message);
-        }
-      };
-      list.appendChild(li);
+    const params = new URLSearchParams({
+      date: recState.date,
+      limit: REC_PAGE_SIZE,
+      offset: recState.offset,
     });
+    const { items, total, offset, limit } = await api(`/api/recordings?${params}`);
+    // The page can fall past the end (e.g. after deletes) — step back.
+    if (!items.length && offset > 0 && total > 0) {
+      recState.offset = Math.max(0, offset - limit);
+      return renderRecordingsPage();
+    }
+    count.textContent = `${total} file${total === 1 ? "" : "s"} on ${recState.date}`;
+    list.innerHTML = "";
+    items.forEach((f) => list.appendChild(renderRecording(f)));
+
+    pager.hidden = total <= limit;
+    $("#recordings-page").textContent = total
+      ? `${offset + 1}–${offset + items.length} of ${total}`
+      : "";
+    $("#recordings-prev").disabled = offset === 0;
+    $("#recordings-next").disabled = offset + limit >= total;
   } catch (e) {
     list.innerHTML = `<li>Error: ${e.message}</li>`;
+    pager.hidden = true;
   }
 }
 
+// Full refresh: reload available dates, reset to the first page.
+async function loadRecordings() {
+  await loadRecordingDates();
+  recState.offset = 0;
+  renderRecordingsPage();
+}
+
 $("#refresh-recordings").onclick = loadRecordings;
+$("#recordings-date").onchange = (e) => {
+  recState.date = e.target.value;
+  recState.offset = 0;
+  renderRecordingsPage();
+};
+$("#recordings-prev").onclick = () => {
+  recState.offset = Math.max(0, recState.offset - REC_PAGE_SIZE);
+  renderRecordingsPage();
+};
+$("#recordings-next").onclick = () => {
+  recState.offset += REC_PAGE_SIZE;
+  renderRecordingsPage();
+};
 
 // ---- bootstrap ----
 (async () => {
