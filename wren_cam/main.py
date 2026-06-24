@@ -11,7 +11,7 @@ from datetime import date as _date
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -121,6 +121,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="wren-cam", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def revalidate_static(request: Request, call_next):
+    """Force browsers to revalidate the UI assets so updates aren't masked by
+    an aggressive cache (notably mobile Safari). ETag/Last-Modified still allow
+    a fast 304 when nothing changed."""
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.endswith((".html", ".js", ".css")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.get("/api/health")
