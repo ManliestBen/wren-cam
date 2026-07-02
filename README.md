@@ -139,8 +139,28 @@ The systemd unit caps memory and CPU so a misbehaving wren-cam process can't tak
 
 When free space on the recordings volume drops below 500 MB, the recorder logs a warning and skips that clip rather than filling the disk. Existing clips are never auto-deleted — clean up via the Recordings tab in the UI.
 
+## Admin login
+
+Viewing the live stream and browsing recordings is open to anyone on the
+network. Everything that *changes* state — editing settings, taking snapshots,
+restarting a camera, and deleting recordings — requires logging in as admin.
+
+- Click **Login** in the top-right and enter the password. On first run the
+  password is seeded to a **throwaway default of `0000`** — log in and change it
+  immediately from **Settings → Change admin password**.
+- Your real password is stored only as a PBKDF2 hash in `config.json`
+  (`admin_password`), which is gitignored — it never touches the repo.
+- To reset a forgotten password: delete the `admin_password` line in
+  `config.json` and restart; it reverts to the `0000` default.
+- Login is rate-limited: 5 failed attempts from one IP within 5 minutes locks
+  that IP out for 5 minutes, so a short PIN can't be brute-forced. The limit is
+  in-memory and clears on restart.
+- Sessions live in memory, so restarting the service logs everyone out — just
+  log back in. This is lightweight protection for a shared home URL, not a
+  hardened auth system; put it behind a reverse proxy with real auth if you
+  expose it to the internet.
+
 ## Notes
 
 - **One process, two cameras:** Starting cam 1 is staggered 5 seconds after cam 0 to avoid libcamera contention. If cam 1 still fails to start, lower its resolution or framerate first.
 - **Recording uses ffmpeg** piped raw frames. The Pi 5 CPU handles 1080p15 fine; for 1080p30 on both cameras you may need to drop fps or resolution.
-- **No auth.** This is intended for a trusted home network. Put it behind a reverse proxy with auth if you expose it.

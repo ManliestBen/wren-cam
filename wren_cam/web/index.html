@@ -19,6 +19,10 @@
       <button data-tab="settings">Settings</button>
       <button data-tab="recordings">Recordings</button>
     </nav>
+    <div class="auth">
+      <span id="auth-state"></span>
+      <button id="auth-btn" class="secondary">Login</button>
+    </div>
   </header>
 
   <main>
@@ -38,6 +42,7 @@
           <select id="recordings-date"></select>
         </label>
         <span id="recordings-count"></span>
+        <button id="delete-day" class="danger admin-only" style="margin-left:auto">Delete all for this day</button>
       </div>
       <ul id="recordings-list"></ul>
       <div class="row pager" id="recordings-pager" hidden>
@@ -49,6 +54,19 @@
   </main>
 
   <div id="toast"></div>
+
+  <div id="login-modal" class="modal" hidden>
+    <div class="modal-box">
+      <h2>Admin login</h2>
+      <p class="modal-hint">Enter the admin password to change settings and delete recordings.</p>
+      <input type="password" id="login-password" placeholder="Password" autocomplete="current-password" />
+      <div class="row" style="margin-top:0.75rem;justify-content:flex-end">
+        <button id="login-cancel" class="secondary">Cancel</button>
+        <button id="login-submit">Log in</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>

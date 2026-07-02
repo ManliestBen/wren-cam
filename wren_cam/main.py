@@ -11,11 +11,14 @@ from datetime import date as _date
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, Response
+import shutil
+
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from .auth import LoginThrottle, SessionStore, hash_password, verify_password
 from .camera import CameraManager, HAS_PICAMERA
 from .config import AppConfig, CameraConfig, ConfigStore
 from .worker import CameraWorker
@@ -110,6 +113,20 @@ class WrenCamApp:
 
 state = WrenCamApp()
 
+# In-memory admin sessions. Viewing (live stream, browsing recordings) is open
+# to anyone on the network; every state-changing route below depends on
+# require_admin, which checks the session cookie set by /api/login.
+sessions = SessionStore()
+login_throttle = LoginThrottle()  # 5 failures / 5 min -> 5 min lockout, per IP
+SESSION_COOKIE = "wren_session"
+SESSION_MAX_AGE = 30 * 24 * 3600  # 30 days
+
+
+def require_admin(request: Request) -> None:
+    token = request.cookies.get(SESSION_COOKIE)
+    if not sessions.is_valid(token):
+        raise HTTPException(401, "admin login required")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -138,6 +155,75 @@ async def revalidate_static(request: Request, call_next):
 @app.get("/api/health")
 def health():
     return {"ok": True, "picamera2": HAS_PICAMERA}
+
+
+# ----- auth -----
+
+
+class LoginBody(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def login(body: LoginBody, request: Request, response: Response):
+    key = request.client.host if request.client else "unknown"
+    wait = login_throttle.seconds_until_unlocked(key)
+    if wait > 0:
+        retry = int(wait) + 1
+        raise HTTPException(
+            429,
+            f"too many failed attempts; try again in {retry}s",
+            headers={"Retry-After": str(retry)},
+        )
+    if not verify_password(body.password, state.config.admin_password):
+        login_throttle.record_failure(key)
+        raise HTTPException(401, "invalid password")
+    login_throttle.record_success(key)
+    token = sessions.create()
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=SESSION_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+    )
+    return {"ok": True, "admin": True}
+
+
+@app.post("/api/logout")
+def logout(request: Request, response: Response):
+    sessions.revoke(request.cookies.get(SESSION_COOKIE))
+    response.delete_cookie(SESSION_COOKIE)
+    return {"ok": True, "admin": False}
+
+
+@app.get("/api/session")
+def session(request: Request):
+    return {"admin": sessions.is_valid(request.cookies.get(SESSION_COOKIE))}
+
+
+class PasswordBody(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@app.post("/api/admin/password", dependencies=[Depends(require_admin)])
+def change_password(body: PasswordBody):
+    if not verify_password(body.current_password, state.config.admin_password):
+        raise HTTPException(403, "current password is incorrect")
+    if len(body.new_password) < 4:
+        raise HTTPException(400, "new password must be at least 4 characters")
+    state.store.set_admin_password(hash_password(body.new_password))
+    return {"ok": True}
+
+
+@app.get("/api/storage")
+def storage():
+    """Free / total bytes on the volume holding the recordings directory."""
+    rec_dir = Path(state.config.recordings_dir)
+    rec_dir.mkdir(parents=True, exist_ok=True)
+    du = shutil.disk_usage(str(rec_dir))
+    return {"total": du.total, "used": du.used, "free": du.free}
 
 
 @app.get("/api/logs")
@@ -171,7 +257,9 @@ def status():
 
 @app.get("/api/config")
 def get_config():
-    return state.config.model_dump()
+    data = state.config.model_dump()
+    data.pop("admin_password", None)  # never expose the password hash
+    return data
 
 
 class AppPatch(BaseModel):
@@ -180,7 +268,7 @@ class AppPatch(BaseModel):
     stream_maxrate: Optional[int] = None
 
 
-@app.patch("/api/config")
+@app.patch("/api/config", dependencies=[Depends(require_admin)])
 def patch_app_config(patch: AppPatch):
     fields = patch.model_dump(exclude_none=True)
     cfg = state.store.update_app(**fields)
@@ -205,7 +293,7 @@ class CameraPatch(BaseModel):
 RESTART_KEYS = ("width", "height", "framerate", "rotate_180")
 
 
-@app.patch("/api/cameras/{cam_id}")
+@app.patch("/api/cameras/{cam_id}", dependencies=[Depends(require_admin)])
 def patch_camera(cam_id: int, patch: CameraPatch):
     fields = patch.model_dump(exclude_none=True)
     old_cfg = next((c for c in state.config.cameras if c.id == cam_id), None)
@@ -235,7 +323,7 @@ def patch_camera(cam_id: int, patch: CameraPatch):
     return new_cfg.model_dump()
 
 
-@app.post("/api/cameras/{cam_id}/restart")
+@app.post("/api/cameras/{cam_id}/restart", dependencies=[Depends(require_admin)])
 def restart_camera(cam_id: int):
     try:
         state.restart_camera(cam_id)
@@ -244,7 +332,7 @@ def restart_camera(cam_id: int):
     return {"ok": True}
 
 
-@app.post("/api/cameras/{cam_id}/snapshot")
+@app.post("/api/cameras/{cam_id}/snapshot", dependencies=[Depends(require_admin)])
 def save_snapshot(cam_id: int):
     worker = state.workers.get(cam_id)
     if worker is None:
@@ -393,7 +481,23 @@ def get_recording(name: str):
     return FileResponse(path, media_type=media_type, filename=name)
 
 
-@app.delete("/api/recordings/{name}")
+@app.delete("/api/recordings", dependencies=[Depends(require_admin)])
+def delete_recordings(date: Optional[str] = None):
+    """Delete every recording, or every recording on a given date (YYYY-MM-DD)."""
+    entries = _media_entries()
+    if date:
+        entries = [e for e in entries if e["date"] == date]
+    deleted = 0
+    for e in entries:
+        try:
+            _safe_recording_path(e["name"]).unlink()
+            deleted += 1
+        except (HTTPException, FileNotFoundError):
+            continue
+    return {"ok": True, "deleted": deleted}
+
+
+@app.delete("/api/recordings/{name}", dependencies=[Depends(require_admin)])
 def delete_recording(name: str):
     path = _safe_recording_path(name)
     path.unlink()

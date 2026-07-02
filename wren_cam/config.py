@@ -33,6 +33,9 @@ class AppConfig(BaseModel):
     recordings_dir: str = "./recordings"
     stream_quality: int = Field(default=80, ge=1, le=100)
     stream_maxrate: int = Field(default=15, ge=1, le=60)
+    # PBKDF2 hash string for the admin password (see wren_cam.auth). Empty on a
+    # fresh config; ConfigStore seeds it with the default password on load.
+    admin_password: str = ""
     cameras: list[CameraConfig] = Field(default_factory=lambda: [CameraConfig(id=0)])
 
 
@@ -46,6 +49,15 @@ class ConfigStore:
         self.path = Path(path)
         self._lock = threading.Lock()
         self._config = self._load()
+        self._seed_admin_password()
+
+    def _seed_admin_password(self) -> None:
+        """Give a passwordless config the default admin password on first run."""
+        if not self._config.admin_password:
+            from .auth import DEFAULT_ADMIN_PASSWORD, hash_password
+            with self._lock:
+                self._config.admin_password = hash_password(DEFAULT_ADMIN_PASSWORD)
+                self._write(self._config)
 
     def _load(self) -> AppConfig:
         if not self.path.exists():
@@ -74,6 +86,13 @@ class ConfigStore:
             self._config = AppConfig.model_validate(data)
             self._write(self._config)
             return self._config.model_copy(deep=True)
+
+    def set_admin_password(self, password_hash: str) -> None:
+        with self._lock:
+            data = self._config.model_dump()
+            data["admin_password"] = password_hash
+            self._config = AppConfig.model_validate(data)
+            self._write(self._config)
 
     def update_camera(self, camera_id: int, **fields) -> CameraConfig:
         with self._lock:

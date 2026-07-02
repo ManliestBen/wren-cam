@@ -28,10 +28,26 @@ header {
   display: flex;
   align-items: center;
   gap: 1.5rem;
-  padding: 0.5rem 1rem;
-  background: var(--brand-bg);
+  padding: 0.85rem 1.25rem;
+  min-height: 68px;
+  /* Match the logos' own (near-white) background so their rectangles blend in
+     instead of showing as bright patches against a warmer bar. */
+  background: #fefefe;
   color: var(--brand-text);
   border-bottom: 1px solid var(--brand-border);
+}
+
+.auth {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+#auth-state {
+  color: var(--brand-accent);
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .brand {
@@ -42,14 +58,14 @@ header {
 }
 
 .brand-icon {
-  height: 40px;
-  width: 40px;
+  height: 52px;
+  width: 52px;
   border-radius: 50%;
   display: block;
 }
 
 .brand-wordmark {
-  height: 32px;
+  height: 40px;
   width: auto;
   display: block;
 }
@@ -223,3 +239,49 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   pointer-events: none;
 }
 #toast.show { opacity: 1; }
+
+/* ---- auth-gated visibility ---- */
+/* admin-only elements are hidden until the body gets .is-admin;
+   viewer-only elements are the inverse. */
+body:not(.is-admin) .admin-only { display: none !important; }
+body.is-admin .viewer-only { display: none !important; }
+
+/* ---- login modal ---- */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal[hidden] { display: none; }
+
+.modal-box {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  width: min(360px, 90vw);
+}
+.modal-box h2 { margin: 0 0 0.5rem 0; font-size: 1.1rem; color: var(--text); }
+.modal-hint { margin: 0 0 0.75rem 0; color: var(--muted); font-size: 0.9rem; }
+.modal-box input[type="password"] { width: 100%; }
+
+/* ---- storage bar ---- */
+.storage-bar {
+  margin-top: 0.6rem;
+  height: 10px;
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.storage-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--brand-accent);
+  transition: width 0.3s;
+}
+.storage-bar > span.full { background: var(--danger); }

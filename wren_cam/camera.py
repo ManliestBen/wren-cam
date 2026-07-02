@@ -132,6 +132,9 @@ class Camera:
             return None
         try:
             from PIL import Image
+            # "RGB888" comes back as BGR byte order; swap so PIL sees true RGB.
+            if arr.ndim == 3 and arr.shape[2] == 3:
+                arr = np.ascontiguousarray(arr[:, :, ::-1])
             img = Image.fromarray(arr)
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=quality)

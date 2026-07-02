@@ -10,6 +10,7 @@ const RESOLUTIONS = [
 
 let cfg = null;
 let statusTimer = null;
+let isAdmin = false;
 
 function toast(msg) {
   const el = $("#toast");
@@ -43,6 +44,87 @@ function formatTime(epoch) {
   return new Date(epoch * 1000).toLocaleString();
 }
 
+// api() throws Error("<status>: <body>"); pull out the server's detail message.
+function errDetail(e) {
+  const m = String(e.message).match(/^\d+:\s*([\s\S]*)$/);
+  if (!m) return e.message;
+  try {
+    return JSON.parse(m[1]).detail || m[1];
+  } catch {
+    return m[1];
+  }
+}
+
+// ---- auth ----
+function updateAuthUI() {
+  document.body.classList.toggle("is-admin", isAdmin);
+  const btn = $("#auth-btn");
+  if (btn) btn.textContent = isAdmin ? "Logout" : "Login";
+  const state = $("#auth-state");
+  if (state) state.textContent = isAdmin ? "Admin" : "";
+}
+
+async function refreshSession() {
+  try {
+    const s = await api("/api/session");
+    isAdmin = !!s.admin;
+  } catch {
+    isAdmin = false;
+  }
+  updateAuthUI();
+}
+
+function openLoginModal() {
+  const m = $("#login-modal");
+  $("#login-password").value = "";
+  m.hidden = false;
+  $("#login-password").focus();
+}
+
+function closeLoginModal() {
+  $("#login-modal").hidden = true;
+}
+
+async function doLogin() {
+  const password = $("#login-password").value;
+  try {
+    await api("/api/login", { method: "POST", body: JSON.stringify({ password }) });
+    isAdmin = true;
+    updateAuthUI();
+    closeLoginModal();
+    toast("Logged in as admin");
+    // Re-render whatever is on screen so admin-only controls appear.
+    renderLive();
+    if ($("#tab-settings").classList.contains("active")) renderSettings();
+  } catch (e) {
+    toast("Login failed: " + errDetail(e));
+  }
+}
+
+async function doLogout() {
+  try {
+    await api("/api/logout", { method: "POST" });
+  } catch {
+    /* ignore */
+  }
+  isAdmin = false;
+  updateAuthUI();
+  toast("Logged out");
+  renderLive();
+  if ($("#tab-settings").classList.contains("active")) renderSettings();
+}
+
+$("#auth-btn").onclick = () => (isAdmin ? doLogout() : openLoginModal());
+$("#login-submit").onclick = doLogin;
+$("#login-cancel").onclick = closeLoginModal;
+$("#login-password").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") doLogin();
+  if (e.key === "Escape") closeLoginModal();
+});
+$("#login-modal").addEventListener("click", (e) => {
+  if (e.target.id === "login-modal") closeLoginModal();
+});
+
 // ---- tab switching ----
 $$("nav button").forEach((btn) => {
   btn.onclick = () => {
@@ -69,7 +151,7 @@ function renderLive() {
         <span class="status" data-cam="${cam.id}"></span>
       </div>
       <div class="actions">
-        <button class="secondary" data-snap="${cam.id}">Snapshot</button>
+        <button class="secondary admin-only" data-snap="${cam.id}">Snapshot</button>
       </div>
     `;
     card.querySelector(`[data-snap="${cam.id}"]`).onclick = async (ev) => {
@@ -114,6 +196,22 @@ function renderSettings() {
 
   const app = $("#app-settings");
   app.innerHTML = `
+    <div class="panel viewer-only">
+      <p style="margin:0;color:var(--muted)">
+        You're viewing as a guest. <a href="#" id="settings-login" style="color:var(--accent)">Log in as admin</a>
+        to change settings, take snapshots, or delete recordings.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Storage</h2>
+      <div id="storage-info" style="color:var(--muted)">Loading…</div>
+      <div id="storage-bar" class="storage-bar" hidden><span></span></div>
+      <div class="admin-only" style="margin-top:0.75rem">
+        <button class="danger" id="delete-all">Delete ALL recordings &amp; snapshots</button>
+      </div>
+    </div>
+
     <div class="panel">
       <h2>App</h2>
       <div class="field"><label>Recordings directory</label>
@@ -122,14 +220,89 @@ function renderSettings() {
         <input type="number" id="app-quality" min="1" max="100" value="${cfg.stream_quality}" /></div>
       <div class="field"><label>Stream max framerate</label>
         <input type="number" id="app-maxrate" min="1" max="60" value="${cfg.stream_maxrate}" /></div>
-      <button id="save-app">Save app settings</button>
+      <button id="save-app" class="admin-only">Save app settings</button>
+    </div>
+
+    <div class="panel admin-only">
+      <h2>Change admin password</h2>
+      <div class="field"><label>Current password</label>
+        <input type="password" id="pw-current" autocomplete="current-password" /></div>
+      <div class="field"><label>New password</label>
+        <input type="password" id="pw-new" autocomplete="new-password" /></div>
+      <div class="field"><label>Confirm new password</label>
+        <input type="password" id="pw-confirm" autocomplete="new-password" /></div>
+      <button id="save-password">Change password</button>
     </div>
   `;
   $("#save-app").onclick = saveApp;
+  $("#save-password").onclick = savePassword;
+  $("#delete-all").onclick = deleteAllRecordings;
+  const loginLink = $("#settings-login");
+  if (loginLink) loginLink.onclick = (e) => { e.preventDefault(); openLoginModal(); };
+
+  loadStorage();
 
   const cams = $("#camera-settings");
   cams.innerHTML = "";
   cfg.cameras.forEach((cam) => cams.appendChild(renderCameraPanel(cam)));
+}
+
+async function loadStorage() {
+  const info = $("#storage-info");
+  const bar = $("#storage-bar");
+  if (!info) return;
+  try {
+    const s = await api("/api/storage");
+    const usedPct = s.total ? Math.round((s.used / s.total) * 100) : 0;
+    info.innerHTML =
+      `<strong>${formatBytes(s.free)}</strong> free of ${formatBytes(s.total)} ` +
+      `(${usedPct}% used)`;
+    if (bar) {
+      bar.hidden = false;
+      const span = bar.querySelector("span");
+      span.style.width = usedPct + "%";
+      span.classList.toggle("full", usedPct >= 90);
+    }
+  } catch (e) {
+    info.textContent = "Storage info unavailable";
+    if (bar) bar.hidden = true;
+  }
+}
+
+async function savePassword() {
+  const current_password = $("#pw-current").value;
+  const new_password = $("#pw-new").value;
+  const confirm2 = $("#pw-confirm").value;
+  if (new_password.length < 4) {
+    toast("New password must be at least 4 characters");
+    return;
+  }
+  if (new_password !== confirm2) {
+    toast("New passwords don't match");
+    return;
+  }
+  try {
+    await api("/api/admin/password", {
+      method: "POST",
+      body: JSON.stringify({ current_password, new_password }),
+    });
+    toast("Password changed");
+    $("#pw-current").value = $("#pw-new").value = $("#pw-confirm").value = "";
+  } catch (e) {
+    toast("Change failed: " + e.message);
+  }
+}
+
+async function deleteAllRecordings() {
+  if (!confirm("Delete ALL recordings and snapshots on the device? This cannot be undone.")) return;
+  try {
+    const r = await api("/api/recordings", { method: "DELETE" });
+    toast(`Deleted ${r.deleted} item${r.deleted === 1 ? "" : "s"}`);
+    loadStorage();
+    if ($("#tab-recordings").classList.contains("active")) loadRecordings();
+  } catch (e) {
+    toast("Delete failed: " + e.message);
+  }
 }
 
 function renderCameraPanel(cam) {
@@ -176,8 +349,8 @@ function renderCameraPanel(cam) {
       <input type="number" data-k="event_gap_seconds" min="1" max="3600" value="${cam.event_gap_seconds}" /></div>
     <div class="field"><label>Max clip length (s, 0 = no cap)</label>
       <input type="number" data-k="max_clip_seconds" min="0" max="86400" value="${cam.max_clip_seconds}" /></div>
-    <button data-act="save">Save</button>
-    <button class="secondary" data-act="restart">Restart camera</button>
+    <button class="admin-only" data-act="save">Save</button>
+    <button class="secondary admin-only" data-act="restart">Restart camera</button>
   `;
 
   const resSel = div.querySelector('[data-k="resolution"]');
@@ -282,7 +455,7 @@ function renderRecording(f) {
     ${media}
     <div class="row" style="margin-top:0.5rem">
       <a href="${url}" download><button class="secondary">Download</button></a>
-      <button class="danger" data-name="${f.name}">Delete</button>
+      <button class="danger admin-only" data-name="${f.name}">Delete</button>
     </div>
   `;
   li.querySelector(".danger").onclick = async () => {
@@ -347,6 +520,18 @@ async function loadRecordings() {
 }
 
 $("#refresh-recordings").onclick = loadRecordings;
+$("#delete-day").onclick = async () => {
+  if (!recState.date) return;
+  if (!confirm(`Delete ALL recordings and snapshots for ${recState.date}? This cannot be undone.`)) return;
+  try {
+    const params = new URLSearchParams({ date: recState.date });
+    const r = await api(`/api/recordings?${params}`, { method: "DELETE" });
+    toast(`Deleted ${r.deleted} item${r.deleted === 1 ? "" : "s"}`);
+    await loadRecordings();
+  } catch (e) {
+    toast("Delete failed: " + e.message);
+  }
+};
 $("#recordings-date").onchange = (e) => {
   recState.date = e.target.value;
   recState.offset = 0;
@@ -364,6 +549,7 @@ $("#recordings-next").onclick = () => {
 // ---- bootstrap ----
 (async () => {
   try {
+    await refreshSession();
     cfg = await api("/api/config");
     renderLive();
     pollStatus();

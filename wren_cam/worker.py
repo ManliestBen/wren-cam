@@ -144,6 +144,13 @@ class CameraWorker(threading.Thread):
         from PIL import Image
         try:
             small = self._downsample_for_stream(arr)
+            # picamera2 delivers the "RGB888" main stream as BGR byte order in
+            # the numpy array, but PIL interprets a 3-channel array as RGB. Swap
+            # R and B so the live stream / snapshots show true colour. (Recordings
+            # use the hardware encoder and are unaffected.)
+            if small.ndim == 3 and small.shape[2] == 3:
+                import numpy as _np
+                small = _np.ascontiguousarray(small[:, :, ::-1])
             img = Image.fromarray(small)
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=quality or self.stream_quality)
