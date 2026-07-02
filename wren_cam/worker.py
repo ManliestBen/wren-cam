@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+import shutil
 import threading
 import time
 from dataclasses import dataclass
@@ -44,6 +45,7 @@ class CameraWorker(threading.Thread):
         recordings_dir: Path,
         stream_quality: int,
         stream_maxrate: int,
+        min_free_bytes: int = 500 * 1024 * 1024,
     ) -> None:
         super().__init__(daemon=True, name=f"cam{cfg.id}-worker")
         self.camera = camera
@@ -51,12 +53,13 @@ class CameraWorker(threading.Thread):
         self.recordings_dir = Path(recordings_dir)
         self.stream_quality = stream_quality
         self.stream_maxrate = max(1, stream_maxrate)
+        self.min_free_bytes = min_free_bytes
 
         self.detector = MotionDetector(
             threshold=cfg.motion_threshold,
             noise_level=cfg.noise_level,
         )
-        self.recorder = Recorder(self.recordings_dir, cfg.id)
+        self.recorder = Recorder(self.recordings_dir, cfg.id, min_free_bytes)
 
         self._stop = threading.Event()
         self._frame_cv = threading.Condition()
@@ -71,6 +74,20 @@ class CameraWorker(threading.Thread):
         self._stop.set()
         with self._frame_cv:
             self._frame_cv.notify_all()
+
+    def set_min_free_bytes(self, min_free_bytes: int) -> None:
+        """Retune the free-space reserve for recordings and snapshots live."""
+        self.min_free_bytes = min_free_bytes
+        self.recorder.min_free_bytes = min_free_bytes
+
+    def has_min_free(self) -> bool:
+        """True if the recordings volume still has at least the reserve free."""
+        try:
+            free = shutil.disk_usage(str(self.recordings_dir)).free
+        except Exception as e:  # noqa: BLE001
+            logger.warning("cam%d: disk_usage check failed: %s", self.cfg.id, e)
+            return True  # can't tell — don't block on a transient error
+        return free >= self.min_free_bytes
 
     def update_config(self, cfg: CameraConfig) -> None:
         """Apply config changes that don't require a camera restart (motion params, focus)."""
@@ -161,6 +178,11 @@ class CameraWorker(threading.Thread):
 
     def save_snapshot(self, quality: int = 95) -> Optional[Path]:
         """Capture a fresh high-quality JPEG and save it to the recordings dir."""
+        if not self.has_min_free():
+            logger.warning(
+                "cam%d: skipping snapshot, free space below reserve", self.cfg.id
+            )
+            return None
         arr = self.camera.capture_array()
         if arr is None:
             return None

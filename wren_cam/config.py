@@ -33,6 +33,12 @@ class AppConfig(BaseModel):
     recordings_dir: str = "./recordings"
     stream_quality: int = Field(default=80, ge=1, le=100)
     stream_maxrate: int = Field(default=15, ge=1, le=60)
+    # Stop writing new clips/snapshots once free space would drop below this,
+    # so the card never fills to a critical failure.
+    min_free_mb: int = Field(default=500, ge=50, le=1_000_000)
+    # Auto-delete recordings/snapshots older than this many days. 0 = keep
+    # forever (no automatic deletion).
+    retention_days: int = Field(default=0, ge=0, le=3650)
     # PBKDF2 hash string for the admin password (see wren_cam.auth). Empty on a
     # fresh config; ConfigStore seeds it with the default password on load.
     admin_password: str = ""

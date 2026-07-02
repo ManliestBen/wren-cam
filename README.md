@@ -72,6 +72,8 @@ Config lives in `config.json` (path overridable with `WREN_CAM_CONFIG`). Changes
 | `recordings_dir` | `./recordings`   | Where motion clips are written                         |
 | `stream_quality` | `80`             | JPEG quality for MJPEG (1-100)                         |
 | `stream_maxrate` | `15`             | Max framerate served to viewers                        |
+| `min_free_mb`    | `500`            | Stop writing clips/snapshots below this much free space |
+| `retention_days` | `0`              | Auto-delete media older than N days (`0` = keep forever) |
 | `cameras`        | one entry, id 0  | List of camera configs (add a second entry for cam 1)  |
 
 ### Per-camera
@@ -137,7 +139,11 @@ The systemd unit caps memory and CPU so a misbehaving wren-cam process can't tak
 
 ### Disk-full protection
 
-When free space on the recordings volume drops below 500 MB, the recorder logs a warning and skips that clip rather than filling the disk. Existing clips are never auto-deleted — clean up via the Recordings tab in the UI.
+When free space on the recordings volume would drop below `min_free_mb` (default **500 MB**), both motion clips **and** snapshots are skipped and a warning is logged, rather than filling the card to a critical failure. Tune the reserve in **Settings → App** (applies immediately, no restart).
+
+### Automatic cleanup (retention)
+
+Set `retention_days` (in **Settings → App**, or `config.json`) to have a background janitor delete recordings and snapshots older than N days. `0` keeps everything forever. The sweep runs at startup and hourly, and again right after you change the setting. Combined with the free-space reserve, this keeps the card from ever filling up. You can still delete manually from the Recordings tab.
 
 ## Admin login
 

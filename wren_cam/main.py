@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from .auth import LoginThrottle, SessionStore, hash_password, verify_password
 from .camera import CameraManager, HAS_PICAMERA
 from .config import AppConfig, CameraConfig, ConfigStore
+from .housekeeper import Housekeeper
 from .worker import CameraWorker
 
 logger = logging.getLogger(__name__)
@@ -33,10 +34,15 @@ class WrenCamApp:
         self.store = ConfigStore()
         self.cam_manager = CameraManager()
         self.workers: dict[int, CameraWorker] = {}
+        self.housekeeper = Housekeeper(self.store)
 
     @property
     def config(self) -> AppConfig:
         return self.store.get()
+
+    @staticmethod
+    def _min_free_bytes(cfg: AppConfig) -> int:
+        return cfg.min_free_mb * 1024 * 1024
 
     def start(self) -> None:
         cfg = self.config
@@ -53,11 +59,28 @@ class WrenCamApp:
                 recordings_dir=Path(cfg.recordings_dir),
                 stream_quality=cfg.stream_quality,
                 stream_maxrate=cfg.stream_maxrate,
+                min_free_bytes=self._min_free_bytes(cfg),
             )
             worker.start()
             self.workers[cc.id] = worker
+        self.housekeeper.start()
+
+    def apply_app_runtime(self) -> None:
+        """Push app-level settings that can change without a camera restart
+        (free-space reserve, retention) to the running workers / housekeeper."""
+        cfg = self.config
+        min_free = self._min_free_bytes(cfg)
+        for w in self.workers.values():
+            w.set_min_free_bytes(min_free)
+        self.housekeeper.wake()
 
     def stop(self) -> None:
+        # 0) Stop the janitor first; it only touches the filesystem.
+        try:
+            self.housekeeper.request_stop()
+            self.housekeeper.join(timeout=3)
+        except Exception:
+            logger.exception("error stopping housekeeper during shutdown")
         # 1) Stop hardware encoders first — picamera2 doesn't tolerate
         #    having start_encoder still active when the camera is closed.
         for w in self.workers.values():
@@ -106,6 +129,7 @@ class WrenCamApp:
             recordings_dir=Path(cfg.recordings_dir),
             stream_quality=cfg.stream_quality,
             stream_maxrate=cfg.stream_maxrate,
+            min_free_bytes=self._min_free_bytes(cfg),
         )
         new_worker.start()
         self.workers[cam_id] = new_worker
@@ -266,13 +290,20 @@ class AppPatch(BaseModel):
     recordings_dir: Optional[str] = None
     stream_quality: Optional[int] = None
     stream_maxrate: Optional[int] = None
+    min_free_mb: Optional[int] = None
+    retention_days: Optional[int] = None
 
 
 @app.patch("/api/config", dependencies=[Depends(require_admin)])
 def patch_app_config(patch: AppPatch):
     fields = patch.model_dump(exclude_none=True)
     cfg = state.store.update_app(**fields)
-    return cfg.model_dump()
+    # Apply free-space reserve / retention changes to the live workers and
+    # janitor without needing a camera restart.
+    state.apply_app_runtime()
+    data = cfg.model_dump()
+    data.pop("admin_password", None)
+    return data
 
 
 class CameraPatch(BaseModel):
@@ -337,6 +368,8 @@ def save_snapshot(cam_id: int):
     worker = state.workers.get(cam_id)
     if worker is None:
         raise HTTPException(404, "camera not available")
+    if not worker.has_min_free():
+        raise HTTPException(507, "insufficient disk space; snapshot skipped")
     path = worker.save_snapshot()
     if path is None:
         raise HTTPException(503, "snapshot failed")

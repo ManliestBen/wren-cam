@@ -220,6 +220,14 @@ function renderSettings() {
         <input type="number" id="app-quality" min="1" max="100" value="${cfg.stream_quality}" /></div>
       <div class="field"><label>Stream max framerate</label>
         <input type="number" id="app-maxrate" min="1" max="60" value="${cfg.stream_maxrate}" /></div>
+      <div class="field"><label>Reserve free space (MB)</label>
+        <input type="number" id="app-minfree" min="50" max="1000000" value="${cfg.min_free_mb}" /></div>
+      <div class="field"><label>Auto-delete recordings after (days)</label>
+        <input type="number" id="app-retention" min="0" max="3650" value="${cfg.retention_days}" /></div>
+      <p style="margin:0.25rem 0 0.75rem;color:var(--muted);font-size:0.85rem">
+        New clips &amp; snapshots stop once free space would drop below the reserve.
+        Auto-delete removes media older than the given number of days (0 = keep forever).
+      </p>
       <button id="save-app" class="admin-only">Save app settings</button>
     </div>
 
@@ -373,12 +381,15 @@ async function saveApp() {
     recordings_dir: $("#app-recdir").value,
     stream_quality: parseInt($("#app-quality").value, 10),
     stream_maxrate: parseInt($("#app-maxrate").value, 10),
+    min_free_mb: parseInt($("#app-minfree").value, 10),
+    retention_days: parseInt($("#app-retention").value, 10),
   };
   try {
     cfg = await api("/api/config", { method: "PATCH", body: JSON.stringify(body) });
     toast("App settings saved");
+    loadStorage();
   } catch (e) {
-    toast("Save failed: " + e.message);
+    toast("Save failed: " + errDetail(e));
   }
 }
 

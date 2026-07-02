@@ -31,13 +31,20 @@ except ImportError:
 
 
 class Recorder:
-    MIN_FREE_BYTES = 500 * 1024 * 1024  # 500 MB
-    DEFAULT_BITRATE = 5_000_000          # 5 Mbps; fine for 720p/1080p15
+    DEFAULT_MIN_FREE_BYTES = 500 * 1024 * 1024  # 500 MB
+    DEFAULT_BITRATE = 5_000_000                  # 5 Mbps; fine for 720p/1080p15
 
-    def __init__(self, recordings_dir: Path, camera_id: int) -> None:
+    def __init__(
+        self,
+        recordings_dir: Path,
+        camera_id: int,
+        min_free_bytes: int = DEFAULT_MIN_FREE_BYTES,
+    ) -> None:
         self.recordings_dir = Path(recordings_dir)
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
         self.camera_id = camera_id
+        # Kept as a mutable attribute so a config change can retune it live.
+        self.min_free_bytes = min_free_bytes
         self._lock = threading.Lock()
         self._picam2: Optional[Any] = None
         self._encoder: Optional[Any] = None
@@ -89,7 +96,7 @@ class Recorder:
                 logger.error("no picamera2 instance provided to recorder")
                 return None
             free = self._free_bytes()
-            if 0 <= free < self.MIN_FREE_BYTES:
+            if 0 <= free < self.min_free_bytes:
                 logger.warning(
                     "cam%d: skipping recording, only %.1f MB free in %s",
                     self.camera_id, free / 1024 / 1024, self.recordings_dir,

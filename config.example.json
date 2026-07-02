@@ -4,6 +4,8 @@
   "recordings_dir": "./recordings",
   "stream_quality": 80,
   "stream_maxrate": 15,
+  "min_free_mb": 500,
+  "retention_days": 0,
   "cameras": [
     {
       "id": 0,
