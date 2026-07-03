@@ -230,7 +230,21 @@ function renderSettings() {
       </p>
       <button id="save-app" class="admin-only">Save app settings</button>
     </div>
+  `;
+  $("#save-app").onclick = saveApp;
+  $("#delete-all").onclick = deleteAllRecordings;
+  const loginLink = $("#settings-login");
+  if (loginLink) loginLink.onclick = (e) => { e.preventDefault(); openLoginModal(); };
 
+  loadStorage();
+
+  const cams = $("#camera-settings");
+  cams.innerHTML = "";
+  cfg.cameras.forEach((cam) => cams.appendChild(renderCameraPanel(cam)));
+
+  // Change-password panel lives at the very bottom of the settings page.
+  const admin = $("#admin-settings");
+  admin.innerHTML = `
     <div class="panel admin-only">
       <h2>Change admin password</h2>
       <div class="field"><label>Current password</label>
@@ -242,17 +256,7 @@ function renderSettings() {
       <button id="save-password">Change password</button>
     </div>
   `;
-  $("#save-app").onclick = saveApp;
   $("#save-password").onclick = savePassword;
-  $("#delete-all").onclick = deleteAllRecordings;
-  const loginLink = $("#settings-login");
-  if (loginLink) loginLink.onclick = (e) => { e.preventDefault(); openLoginModal(); };
-
-  loadStorage();
-
-  const cams = $("#camera-settings");
-  cams.innerHTML = "";
-  cfg.cameras.forEach((cam) => cams.appendChild(renderCameraPanel(cam)));
 }
 
 async function loadStorage() {
