@@ -219,9 +219,10 @@ async function commitZoom(camId, st) {
   }
 }
 
-// Each pan press nudges the view by a quarter of the currently-visible window.
-const ZOOM_STEP = 1.5;
-const PAN_STEP = 0.25;
+const ZOOM_STEP = 0.1; // zoom change per button press (added/subtracted)
+// Each pan press nudges the view by this fraction of the currently-visible
+// window — small, for fine positioning.
+const PAN_STEP = 0.05;
 
 function wireZoom(card, cam) {
   const view = card.querySelector(".cam-view");
@@ -252,6 +253,8 @@ function wireZoom(card, cam) {
   };
 
   const setZoom = (z) => {
+    // Snap to a clean 0.1 grid so repeated presses don't accrue float drift.
+    z = Math.round(z * 10) / 10;
     st.z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
     st.cx = clampCenter(st.z, st.cx);
     st.cy = clampCenter(st.z, st.cy);
@@ -267,8 +270,8 @@ function wireZoom(card, cam) {
     commitZoom(cam.id, st);
   };
 
-  btn('[data-zoom="in"]').onclick = () => setZoom(st.z * ZOOM_STEP);
-  btn('[data-zoom="out"]').onclick = () => setZoom(st.z / ZOOM_STEP);
+  btn('[data-zoom="in"]').onclick = () => setZoom(st.z + ZOOM_STEP);
+  btn('[data-zoom="out"]').onclick = () => setZoom(st.z - ZOOM_STEP);
   btn('[data-pan="reset"]').onclick = () => {
     st.z = 1;
     st.cx = 0.5;
