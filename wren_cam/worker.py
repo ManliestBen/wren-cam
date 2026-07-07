@@ -92,12 +92,18 @@ class CameraWorker(threading.Thread):
     def update_config(self, cfg: CameraConfig) -> None:
         """Apply config changes that don't require a camera restart (motion params, focus)."""
         old_focus = (self.cfg.autofocus, self.cfg.lens_position)
+        old_zoom = (self.cfg.zoom, self.cfg.zoom_center_x, self.cfg.zoom_center_y)
         self.cfg = cfg
         self.detector.threshold = cfg.motion_threshold
         self.detector.noise_level = cfg.noise_level
         new_focus = (cfg.autofocus, cfg.lens_position)
         if new_focus != old_focus:
             self.camera.update_focus(cfg.autofocus, cfg.lens_position)
+        new_zoom = (cfg.zoom, cfg.zoom_center_x, cfg.zoom_center_y)
+        if new_zoom != old_zoom:
+            self.camera.set_zoom(
+                cfg.zoom, cfg.zoom_center_x, cfg.zoom_center_y, cfg.rotate_180
+            )
 
     @property
     def latest_jpeg(self) -> Optional[bytes]:

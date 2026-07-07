@@ -87,6 +87,9 @@ Config lives in `config.json` (path overridable with `WREN_CAM_CONFIG`). Changes
 | `autofocus`          | `continuous`  | `continuous` or `manual` (requires Pi Camera Module 3)                |
 | `lens_position`      | `0.0`         | Manual focus; 0 ≈ infinity, ~0.5 ≈ 50 cm                              |
 | `rotate_180`         | `false`       | Flip video 180° for an upside-down camera                             |
+| `zoom`               | `1.0`         | Digital zoom (1.0–8.0); ISP crop applied to stream **and** recordings |
+| `zoom_center_x`      | `0.5`         | Horizontal pan center (0–1) within the full field of view             |
+| `zoom_center_y`      | `0.5`         | Vertical pan center (0–1) within the full field of view               |
 | `motion_enabled`     | `true`        | Toggle motion-triggered recording                                     |
 | `motion_threshold`   | `1500`        | Changed pixels needed to declare motion                               |
 | `noise_level`        | `32`          | Per-pixel intensity delta filtered as noise                           |
@@ -94,6 +97,10 @@ Config lives in `config.json` (path overridable with `WREN_CAM_CONFIG`). Changes
 | `max_clip_seconds`   | `300`         | Hard cap on a single clip (0 = no cap)                                |
 
 To add a second camera, append another entry with `"id": 1`.
+
+### Pan / zoom
+
+The **Live** view has admin-only pan/zoom controls (scroll to zoom, drag to pan, or the on-image `− / + / ⤢` buttons). This is a true digital zoom applied at the ISP via libcamera's `ScalerCrop`, *upstream* of both outputs — so the crop shows up in the live stream **and** in recordings (a recording made while zoomed captures only the zoomed view, not the full frame). Motion detection also sees only the cropped region. The setting persists in `config.json` and survives restarts; press **⤢** (or set `zoom` back to `1.0`) to return to the full field of view.
 
 ## How motion detection works
 

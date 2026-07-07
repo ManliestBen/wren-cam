@@ -145,7 +145,15 @@ function renderLive() {
     const card = document.createElement("div");
     card.className = "cam-card";
     card.innerHTML = `
-      <img src="/stream/${cam.id}" alt="cam ${cam.id}" />
+      <div class="cam-view">
+        <img src="/stream/${cam.id}" alt="cam ${cam.id}" />
+        <div class="zoom-ctl admin-only">
+          <button class="secondary" data-zoom="out" title="Zoom out">−</button>
+          <span class="zoom-level">1.0×</span>
+          <button class="secondary" data-zoom="in" title="Zoom in">+</button>
+          <button class="secondary" data-zoom="reset" title="Reset view">⤢</button>
+        </div>
+      </div>
       <div class="meta">
         <span>${cam.name} — ${cam.width}×${cam.height} @ ${cam.framerate}fps</span>
         <span class="status" data-cam="${cam.id}"></span>
@@ -169,8 +177,123 @@ function renderLive() {
         btn.textContent = orig;
       }
     };
+    wireZoom(card, cam);
     grid.appendChild(card);
   });
+}
+
+// ---- live pan/zoom (admin-only; enforced again on the server) ----
+const ZOOM_MIN = 1.0;
+const ZOOM_MAX = 8.0;
+
+// Legal center range shrinks as you zoom in so the crop stays on-sensor.
+function clampCenter(z, c) {
+  if (z <= 1) return 0.5;
+  const half = 0.5 / z;
+  return Math.min(1 - half, Math.max(half, c));
+}
+
+async function commitZoom(camId, st) {
+  try {
+    await api(`/api/cameras/${camId}/zoom`, {
+      method: "POST",
+      body: JSON.stringify({ zoom: st.z, center_x: st.cx, center_y: st.cy }),
+    });
+    // Keep local cfg in sync so a re-render (e.g. after login) restores the view.
+    const cam = cfg && cfg.cameras.find((c) => c.id === camId);
+    if (cam) {
+      cam.zoom = st.z;
+      cam.zoom_center_x = st.cx;
+      cam.zoom_center_y = st.cy;
+    }
+  } catch (e) {
+    toast("Zoom failed: " + errDetail(e));
+  }
+}
+
+function debounceCommit(camId, st) {
+  clearTimeout(st._t);
+  st._t = setTimeout(() => commitZoom(camId, st), 250);
+}
+
+function wireZoom(card, cam) {
+  const view = card.querySelector(".cam-view");
+  const img = view.querySelector("img");
+  const label = view.querySelector(".zoom-level");
+  const st = {
+    z: cam.zoom || 1,
+    cx: cam.zoom_center_x == null ? 0.5 : cam.zoom_center_x,
+    cy: cam.zoom_center_y == null ? 0.5 : cam.zoom_center_y,
+    _t: null,
+  };
+  const updateLabel = () => (label.textContent = st.z.toFixed(1) + "×");
+  updateLabel();
+
+  // Guests see nothing interactive; the controls are also hidden via CSS.
+  if (!isAdmin) return;
+
+  const setZoom = (z) => {
+    st.z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+    st.cx = clampCenter(st.z, st.cx);
+    st.cy = clampCenter(st.z, st.cy);
+    updateLabel();
+  };
+
+  view.querySelector('[data-zoom="in"]').onclick = () => {
+    setZoom(st.z * 1.5);
+    commitZoom(cam.id, st);
+  };
+  view.querySelector('[data-zoom="out"]').onclick = () => {
+    setZoom(st.z / 1.5);
+    commitZoom(cam.id, st);
+  };
+  view.querySelector('[data-zoom="reset"]').onclick = () => {
+    st.z = 1;
+    st.cx = 0.5;
+    st.cy = 0.5;
+    updateLabel();
+    commitZoom(cam.id, st);
+  };
+
+  view.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      setZoom(st.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+      debounceCommit(cam.id, st);
+    },
+    { passive: false }
+  );
+
+  // Drag to pan (only meaningful once zoomed in).
+  let dragging = false;
+  let sx = 0, sy = 0, scx = 0, scy = 0;
+  view.addEventListener("pointerdown", (e) => {
+    if (st.z <= 1) return;
+    dragging = true;
+    view.classList.add("panning");
+    try { view.setPointerCapture(e.pointerId); } catch {}
+    sx = e.clientX;
+    sy = e.clientY;
+    scx = st.cx;
+    scy = st.cy;
+  });
+  view.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const r = img.getBoundingClientRect();
+    // Image spans 1/z of the scene, so a full-width drag pans by 1/z.
+    st.cx = clampCenter(st.z, scx - (e.clientX - sx) / r.width / st.z);
+    st.cy = clampCenter(st.z, scy - (e.clientY - sy) / r.height / st.z);
+  });
+  const endDrag = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    view.classList.remove("panning");
+    try { view.releasePointerCapture(e.pointerId); } catch {}
+    commitZoom(cam.id, st);
+  };
+  view.addEventListener("pointerup", endDrag);
+  view.addEventListener("pointercancel", endDrag);
 }
 
 async function pollStatus() {

@@ -16,7 +16,7 @@ import shutil
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .auth import LoginThrottle, SessionStore, hash_password, verify_password
 from .camera import CameraManager, HAS_PICAMERA
@@ -375,6 +375,37 @@ def save_snapshot(cam_id: int):
         raise HTTPException(503, "snapshot failed")
     st = path.stat()
     return {"name": path.name, "size": st.st_size, "modified": int(st.st_mtime)}
+
+
+class ZoomPatch(BaseModel):
+    zoom: float = Field(default=1.0, ge=1.0, le=8.0)
+    center_x: float = Field(default=0.5, ge=0.0, le=1.0)
+    center_y: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+@app.post("/api/cameras/{cam_id}/zoom", dependencies=[Depends(require_admin)])
+def set_zoom(cam_id: int, patch: ZoomPatch):
+    """Admin-only digital pan/zoom. Persists to config and applies live at the
+    ISP (ScalerCrop), so both the live stream and recordings show the crop."""
+    if not any(c.id == cam_id for c in state.config.cameras):
+        raise HTTPException(404, f"camera {cam_id} not configured")
+    try:
+        new_cfg = state.store.update_camera(
+            cam_id,
+            zoom=patch.zoom,
+            zoom_center_x=patch.center_x,
+            zoom_center_y=patch.center_y,
+        )
+    except KeyError:
+        raise HTTPException(404, f"camera {cam_id} not configured")
+    worker = state.workers.get(cam_id)
+    if worker is not None:
+        worker.update_config(new_cfg)
+    return {
+        "zoom": new_cfg.zoom,
+        "center_x": new_cfg.zoom_center_x,
+        "center_y": new_cfg.zoom_center_y,
+    }
 
 
 @app.get("/snapshot/{cam_id}.jpg")

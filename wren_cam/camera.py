@@ -36,6 +36,14 @@ class Camera:
         self.width = 0
         self.height = 0
         self.framerate = 0
+        # Digital zoom state. _scaler_full is the maximal ScalerCrop rectangle
+        # (x, y, w, h) in sensor coordinates — the coordinate space every crop
+        # is computed against. It's discovered once the camera is running.
+        self._scaler_full: Optional[tuple] = None
+        self._zoom = 1.0
+        self._center_x = 0.5
+        self._center_y = 0.5
+        self._rotate_180 = False
 
     def is_available(self) -> bool:
         return self._cam is not None
@@ -48,6 +56,9 @@ class Camera:
         autofocus: str = "continuous",
         lens_position: float = 0.0,
         rotate_180: bool = False,
+        zoom: float = 1.0,
+        zoom_center_x: float = 0.5,
+        zoom_center_y: float = 0.5,
     ) -> bool:
         if not HAS_PICAMERA:
             logger.warning("picamera2 unavailable; camera %d disabled", self.index)
@@ -68,6 +79,14 @@ class Camera:
                 self.width = width
                 self.height = height
                 self.framerate = framerate
+                # Discover the crop coordinate space, then re-apply any saved
+                # zoom so it survives restarts.
+                self._scaler_full = self._read_scaler_full()
+                self._zoom = max(1.0, float(zoom))
+                self._center_x = min(1.0, max(0.0, float(zoom_center_x)))
+                self._center_y = min(1.0, max(0.0, float(zoom_center_y)))
+                self._rotate_180 = bool(rotate_180)
+                self._apply_zoom()
                 logger.info("camera %d started %dx%d @ %dfps", self.index, width, height, framerate)
                 return True
             except Exception as e:
@@ -93,6 +112,59 @@ class Camera:
         with self._lock:
             self._apply_focus(autofocus, lens_position)
 
+    def _read_scaler_full(self) -> Optional[tuple]:
+        """The maximal ScalerCrop rectangle for the current mode — the sensor
+        coordinate space every crop is expressed in."""
+        if self._cam is None:
+            return None
+        props = getattr(self._cam, "camera_properties", None) or {}
+        rect = props.get("ScalerCropMaximum")
+        if rect and len(rect) == 4 and rect[2] > 0 and rect[3] > 0:
+            return tuple(int(v) for v in rect)
+        size = props.get("PixelArraySize")
+        if size and len(size) == 2 and size[0] > 0 and size[1] > 0:
+            return (0, 0, int(size[0]), int(size[1]))
+        return None
+
+    def _apply_zoom(self) -> None:
+        """Compute a ScalerCrop rectangle from the current zoom/center and push
+        it to the ISP. Caller must hold self._lock. No-op if unsupported."""
+        if self._cam is None or self._scaler_full is None:
+            return
+        fx, fy, fw, fh = self._scaler_full
+        z = max(1.0, self._zoom)
+        cx, cy = self._center_x, self._center_y
+        # A 180° rotation flips the displayed image on both axes; invert the
+        # requested center so a pan feels natural in the rotated view.
+        if self._rotate_180:
+            cx, cy = 1.0 - cx, 1.0 - cy
+        crop_w = max(1, int(round(fw / z)))
+        crop_h = max(1, int(round(fh / z)))
+        px = fx + cx * fw - crop_w / 2.0
+        py = fy + cy * fh - crop_h / 2.0
+        # Keep the crop fully inside the sensor's usable rectangle.
+        px = int(round(min(max(px, fx), fx + fw - crop_w)))
+        py = int(round(min(max(py, fy), fy + fh - crop_h)))
+        try:
+            self._cam.set_controls({"ScalerCrop": (px, py, crop_w, crop_h)})
+        except Exception as e:
+            logger.debug("camera %d: ScalerCrop unsupported: %s", self.index, e)
+
+    def set_zoom(
+        self,
+        zoom: float,
+        center_x: float,
+        center_y: float,
+        rotate_180: Optional[bool] = None,
+    ) -> None:
+        with self._lock:
+            self._zoom = max(1.0, float(zoom))
+            self._center_x = min(1.0, max(0.0, float(center_x)))
+            self._center_y = min(1.0, max(0.0, float(center_y)))
+            if rotate_180 is not None:
+                self._rotate_180 = bool(rotate_180)
+            self._apply_zoom()
+
     def stop(self) -> None:
         with self._lock:
             if self._cam is not None:
@@ -111,10 +183,16 @@ class Camera:
         autofocus: str,
         lens_position: float,
         rotate_180: bool = False,
+        zoom: float = 1.0,
+        zoom_center_x: float = 0.5,
+        zoom_center_y: float = 0.5,
     ) -> bool:
         self.stop()
         time.sleep(0.5)
-        return self.start(width, height, framerate, autofocus, lens_position, rotate_180)
+        return self.start(
+            width, height, framerate, autofocus, lens_position, rotate_180,
+            zoom, zoom_center_x, zoom_center_y,
+        )
 
     def capture_array(self) -> Optional[np.ndarray]:
         cam = self._cam
@@ -171,6 +249,7 @@ class CameraManager:
                 cc.width, cc.height, cc.framerate,
                 cc.autofocus, cc.lens_position,
                 cc.rotate_180,
+                cc.zoom, cc.zoom_center_x, cc.zoom_center_y,
             )
             if ok:
                 self.cameras[cc.id] = cam
@@ -188,4 +267,7 @@ class CameraManager:
         if cam is None:
             cam = Camera(cc.id)
             self.cameras[cam_id] = cam
-        return cam.restart(cc.width, cc.height, cc.framerate, cc.autofocus, cc.lens_position, cc.rotate_180)
+        return cam.restart(
+            cc.width, cc.height, cc.framerate, cc.autofocus, cc.lens_position,
+            cc.rotate_180, cc.zoom, cc.zoom_center_x, cc.zoom_center_y,
+        )

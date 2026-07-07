@@ -20,6 +20,13 @@ class CameraConfig(BaseModel):
     autofocus: Literal["continuous", "manual"] = "continuous"
     lens_position: float = Field(default=0.0, ge=0.0, le=15.0)
     rotate_180: bool = False
+    # Digital pan/zoom applied at the ISP via libcamera's ScalerCrop. zoom=1.0
+    # is the full field of view; the center is normalized 0..1 within it. This
+    # crops upstream of BOTH the live stream and the hardware encoder, so
+    # recordings capture the same zoomed/panned view.
+    zoom: float = Field(default=1.0, ge=1.0, le=8.0)
+    zoom_center_x: float = Field(default=0.5, ge=0.0, le=1.0)
+    zoom_center_y: float = Field(default=0.5, ge=0.0, le=1.0)
     motion_enabled: bool = True
     motion_threshold: int = Field(default=1500, ge=1, le=10_000_000)
     noise_level: int = Field(default=32, ge=1, le=255)

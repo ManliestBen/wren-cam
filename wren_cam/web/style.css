@@ -118,6 +118,37 @@ main { padding: 1rem; }
   object-fit: contain;
 }
 
+.cam-view {
+  position: relative;
+  touch-action: none; /* let pointer drag pan instead of scrolling the page */
+}
+
+/* Admins can drag the live view to pan once zoomed in. */
+body.is-admin .cam-view { cursor: grab; }
+body.is-admin .cam-view.panning { cursor: grabbing; }
+
+.zoom-ctl {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 6px;
+}
+
+.zoom-ctl button { padding: 0.1rem 0.45rem; line-height: 1.2; }
+
+.zoom-ctl .zoom-level {
+  color: #fff;
+  font-size: 0.85rem;
+  min-width: 2.6rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .cam-card .meta {
   padding: 0.5rem 0.75rem;
   display: flex;
