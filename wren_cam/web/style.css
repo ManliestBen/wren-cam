@@ -132,22 +132,53 @@ body.is-admin .cam-view.panning { cursor: grabbing; }
   top: 0.5rem;
   right: 0.5rem;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem;
+  gap: 0.3rem;
+  padding: 0.35rem;
   background: rgba(0, 0, 0, 0.55);
   border-radius: 6px;
 }
 
-.zoom-ctl button { padding: 0.1rem 0.45rem; line-height: 1.2; }
+.zoom-ctl .zoom-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.zoom-ctl button {
+  padding: 0;
+  width: 1.9rem;
+  height: 1.9rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
 .zoom-ctl .zoom-level {
   color: #fff;
   font-size: 0.85rem;
-  min-width: 2.6rem;
+  min-width: 2.8rem;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
+
+/* Directional pan pad: arrows around a center reset button. */
+.pan-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 1.9rem);
+  grid-template-areas:
+    ".    up    ."
+    "left reset right"
+    ".    down  .";
+  gap: 0.2rem;
+}
+.pan-pad [data-pan="up"]    { grid-area: up; }
+.pan-pad [data-pan="left"]  { grid-area: left; }
+.pan-pad [data-pan="reset"] { grid-area: reset; }
+.pan-pad [data-pan="right"] { grid-area: right; }
+.pan-pad [data-pan="down"]  { grid-area: down; }
 
 .cam-card .meta {
   padding: 0.5rem 0.75rem;

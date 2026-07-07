@@ -100,7 +100,7 @@ To add a second camera, append another entry with `"id": 1`.
 
 ### Pan / zoom
 
-The **Live** view has admin-only pan/zoom controls (scroll to zoom, drag to pan, or the on-image `− / + / ⤢` buttons). This is a true digital zoom applied at the ISP via libcamera's `ScalerCrop`, *upstream* of both outputs — so the crop shows up in the live stream **and** in recordings (a recording made while zoomed captures only the zoomed view, not the full frame). Motion detection also sees only the cropped region. The setting persists in `config.json` and survives restarts; press **⤢** (or set `zoom` back to `1.0`) to return to the full field of view.
+The **Live** view has admin-only pan/zoom controls: on-image `− / +` zoom buttons, a directional pan pad (▲ ◀ ▶ ▼) with a center reset (⤢), and drag-to-pan as a shortcut once zoomed in. This is a true digital zoom applied at the ISP via libcamera's `ScalerCrop`, *upstream* of both outputs — so the crop shows up in the live stream **and** in recordings (a recording made while zoomed captures only the zoomed view, not the full frame). Motion detection also sees only the cropped region. The setting persists in `config.json` and survives restarts; press **⤢** (or set `zoom` back to `1.0`) to return to the full field of view.
 
 ## How motion detection works
 

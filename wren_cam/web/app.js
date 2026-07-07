@@ -148,10 +148,18 @@ function renderLive() {
       <div class="cam-view">
         <img src="/stream/${cam.id}" alt="cam ${cam.id}" />
         <div class="zoom-ctl admin-only">
-          <button class="secondary" data-zoom="out" title="Zoom out">−</button>
-          <span class="zoom-level">1.0×</span>
-          <button class="secondary" data-zoom="in" title="Zoom in">+</button>
-          <button class="secondary" data-zoom="reset" title="Reset view">⤢</button>
+          <div class="zoom-row">
+            <button class="secondary" data-zoom="out" title="Zoom out">−</button>
+            <span class="zoom-level">1.0×</span>
+            <button class="secondary" data-zoom="in" title="Zoom in">+</button>
+          </div>
+          <div class="pan-pad">
+            <button class="secondary" data-pan="up" title="Pan up">▲</button>
+            <button class="secondary" data-pan="left" title="Pan left">◀</button>
+            <button class="secondary" data-pan="reset" title="Reset view">⤢</button>
+            <button class="secondary" data-pan="right" title="Pan right">▶</button>
+            <button class="secondary" data-pan="down" title="Pan down">▼</button>
+          </div>
         </div>
       </div>
       <div class="meta">
@@ -211,10 +219,9 @@ async function commitZoom(camId, st) {
   }
 }
 
-function debounceCommit(camId, st) {
-  clearTimeout(st._t);
-  st._t = setTimeout(() => commitZoom(camId, st), 250);
-}
+// Each pan press nudges the view by a quarter of the currently-visible window.
+const ZOOM_STEP = 1.5;
+const PAN_STEP = 0.25;
 
 function wireZoom(card, cam) {
   const view = card.querySelector(".cam-view");
@@ -224,7 +231,6 @@ function wireZoom(card, cam) {
     z: cam.zoom || 1,
     cx: cam.zoom_center_x == null ? 0.5 : cam.zoom_center_x,
     cy: cam.zoom_center_y == null ? 0.5 : cam.zoom_center_y,
-    _t: null,
   };
   const updateLabel = () => (label.textContent = st.z.toFixed(1) + "×");
   updateLabel();
@@ -232,44 +238,55 @@ function wireZoom(card, cam) {
   // Guests see nothing interactive; the controls are also hidden via CSS.
   if (!isAdmin) return;
 
+  const btn = (sel) => view.querySelector(sel);
+  // Panning is meaningless at 1× (whole frame visible); zoom buttons stop at
+  // the configured limits. Reflect that by disabling the dead buttons.
+  const updateControls = () => {
+    const atMin = st.z <= ZOOM_MIN + 1e-9;
+    const atMax = st.z >= ZOOM_MAX - 1e-9;
+    btn('[data-zoom="out"]').disabled = atMin;
+    btn('[data-zoom="in"]').disabled = atMax;
+    ["up", "down", "left", "right"].forEach((d) => {
+      btn(`[data-pan="${d}"]`).disabled = atMin;
+    });
+  };
+
   const setZoom = (z) => {
     st.z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
     st.cx = clampCenter(st.z, st.cx);
     st.cy = clampCenter(st.z, st.cy);
     updateLabel();
+    updateControls();
+    commitZoom(cam.id, st);
   };
 
-  view.querySelector('[data-zoom="in"]').onclick = () => {
-    setZoom(st.z * 1.5);
+  const panBy = (dx, dy) => {
+    const step = PAN_STEP / st.z; // a quarter of the visible window
+    st.cx = clampCenter(st.z, st.cx + dx * step);
+    st.cy = clampCenter(st.z, st.cy + dy * step);
     commitZoom(cam.id, st);
   };
-  view.querySelector('[data-zoom="out"]').onclick = () => {
-    setZoom(st.z / 1.5);
-    commitZoom(cam.id, st);
-  };
-  view.querySelector('[data-zoom="reset"]').onclick = () => {
+
+  btn('[data-zoom="in"]').onclick = () => setZoom(st.z * ZOOM_STEP);
+  btn('[data-zoom="out"]').onclick = () => setZoom(st.z / ZOOM_STEP);
+  btn('[data-pan="reset"]').onclick = () => {
     st.z = 1;
     st.cx = 0.5;
     st.cy = 0.5;
     updateLabel();
+    updateControls();
     commitZoom(cam.id, st);
   };
+  btn('[data-pan="up"]').onclick = () => panBy(0, -1);
+  btn('[data-pan="down"]').onclick = () => panBy(0, 1);
+  btn('[data-pan="left"]').onclick = () => panBy(-1, 0);
+  btn('[data-pan="right"]').onclick = () => panBy(1, 0);
 
-  view.addEventListener(
-    "wheel",
-    (e) => {
-      e.preventDefault();
-      setZoom(st.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
-      debounceCommit(cam.id, st);
-    },
-    { passive: false }
-  );
-
-  // Drag to pan (only meaningful once zoomed in).
+  // Drag to pan is still available as a shortcut once zoomed in.
   let dragging = false;
   let sx = 0, sy = 0, scx = 0, scy = 0;
   view.addEventListener("pointerdown", (e) => {
-    if (st.z <= 1) return;
+    if (st.z <= 1 || e.target.closest(".zoom-ctl")) return;
     dragging = true;
     view.classList.add("panning");
     try { view.setPointerCapture(e.pointerId); } catch {}
@@ -294,6 +311,8 @@ function wireZoom(card, cam) {
   };
   view.addEventListener("pointerup", endDrag);
   view.addEventListener("pointercancel", endDrag);
+
+  updateControls();
 }
 
 async function pollStatus() {
